@@ -1,0 +1,6 @@
+{
+  "name": "Maidama Math | ميدمة ماث",
+  "description": "Intelligent multimodal mathematics tutor and problem solver with step-by-step derivations, symbolic computation verification, graphing calculator, and multi-input support.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
