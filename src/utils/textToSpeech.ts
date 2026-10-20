@@ -42,6 +42,7 @@ export function formatMathForSpeech(rawText: string, lang: 'ar' | 'en'): string 
     speech = speech.replace(/\\frac\{\\partial\}\{\\partial x\}/g, ' المشتقة الجزئية بالنسبة إلى س ');
     speech = speech.replace(/\\frac\{df\}\{dx\}/g, ' مشتقة الدالة إف بالنسبة إلى س ');
     speech = speech.replace(/\\frac\{dy\}\{dx\}/g, ' مشتقة واي بالنسبة إلى س ');
+    speech = speech.replace(/\bd\/dx\b/g, ' المشتقة بالنسبة إلى س ');
     speech = speech.replace(/f''\(([^)]+)\)/g, ' المشتقة الثانية للدالة عند $1 ');
     speech = speech.replace(/f'\(([^)]+)\)/g, ' المشتقة الأولى للدالة عند $1 ');
 
@@ -146,6 +147,16 @@ export function formatMathForSpeech(rawText: string, lang: 'ar' | 'en'): string 
   } else {
     // --- ENGLISH MATHEMATICAL PHRASING (Clear Educational Broadcaster) ---
 
+    // Calculus: Derivatives & Partial Derivatives (must run before generic \frac)
+    speech = speech.replace(/\\frac\{d\}\{dx\}/g, ' the derivative with respect to x ');
+    speech = speech.replace(/\\frac\{d\^2\}\{dx\^2\}/g, ' the second derivative with respect to x ');
+    speech = speech.replace(/\\frac\{\\partial\}\{\\partial x\}/g, ' the partial derivative with respect to x ');
+    speech = speech.replace(/\\frac\{df\}\{dx\}/g, ' the derivative of f with respect to x ');
+    speech = speech.replace(/\\frac\{dy\}\{dx\}/g, ' the derivative of y with respect to x ');
+    speech = speech.replace(/\bd\/dx\b/g, ' the derivative with respect to x ');
+    speech = speech.replace(/f''\(([^)]+)\)/g, ' second derivative of f at $1 ');
+    speech = speech.replace(/f'\(([^)]+)\)/g, ' first derivative of f at $1 ');
+
     // Fractions
     speech = speech.replace(/\\frac\{1\}\{2\}/g, ' one half ');
     speech = speech.replace(/\\frac\{1\}\{3\}/g, ' one third ');
@@ -157,16 +168,9 @@ export function formatMathForSpeech(rawText: string, lang: 'ar' | 'en'): string 
     speech = speech.replace(/\\sqrt\[([^\]]+)\]\{([^}]+)\}/g, ' the $1th root of $2 ');
     speech = speech.replace(/\\sqrt\{([^}]+)\}/g, ' the square root of $1 ');
 
-    // Calculus
-    speech = speech.replace(/\\frac\{d\}\{dx\}/g, ' the derivative with respect to x ');
-    speech = speech.replace(/\\frac\{d\^2\}\{dx\^2\}/g, ' the second derivative with respect to x ');
-    speech = speech.replace(/\\frac\{\\partial\}\{\\partial x\}/g, ' the partial derivative with respect to x ');
-    speech = speech.replace(/f''\(([^)]+)\)/g, ' second derivative of f at $1 ');
-    speech = speech.replace(/f'\(([^)]+)\)/g, ' first derivative of f at $1 ');
+    // Integrals & Limits
     speech = speech.replace(/\\int_\{?([^}^_]+)\}?\^\{?([^}]+)\}?/g, ' the definite integral from $1 to $2 of ');
     speech = speech.replace(/\\int/g, ' the integral of ');
-
-    // Limits
     speech = speech.replace(/\\lim_\{?([a-zA-Z]+)\s*\\to\s*([^}]+)\}?/g, ' the limit as $1 approaches $2 of ');
     speech = speech.replace(/\\lim_\{?([^}]+)\}?/g, ' the limit as $1 of ');
 

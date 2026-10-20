@@ -59,7 +59,9 @@ console.log('\n--- 3. Pedagogical Introductions (Category-Aware) ---');
 
 const calculusSolution: MathSolution = {
   id: 'sol-calc-1',
+  timestamp: Date.now(),
   originalQuestion: 'd/dx of x^3 + 5',
+  interpretedProblem: 'd/dx (x^3 + 5)',
   interpretedLatex: '\\frac{d}{dx}(x^3 + 5)',
   category: 'Calculus',
   topic: 'Derivatives',
@@ -72,19 +74,24 @@ const calculusSolution: MathSolution = {
     {
       stepNumber: 1,
       title: 'تطبيق قاعدة القوة',
-      mathLatex: '3x^2',
+      latex: '3x^2',
       explanation: 'نشتق الحد الأول بضرب المعامل بالأس وطرح واحد من الأس.',
     },
     {
       stepNumber: 2,
       title: 'مشتقة الثابت',
-      mathLatex: '0',
+      latex: '0',
       explanation: 'مشتقة العدد الثابت خمسة تساوي صفراً.',
     },
   ],
   finalAnswer: '3x^2',
   plainAnswer: '3x^2',
-  verification: { status: 'verified', residual: 0 },
+  verification: {
+    status: 'verified',
+    method: 'algebraic',
+    explanation: 'Symbolic power rule verified',
+    residual: 0,
+  },
   inputMethod: 'text',
 };
 
