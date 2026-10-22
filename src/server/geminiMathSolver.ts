@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { mathEngine, EngineResult } from './mathEngine.js';
 import { MathSolution, ExplanationStyle, EducationLevel, Language } from '../types/math.js';
+import { toArabicDigits } from '../utils/mathNormalizer.js';
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -145,7 +146,7 @@ ${computationContext}`,
     }
 
     let response: any = null;
-    const candidateModels = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    const candidateModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
     let lastError: any = null;
 
     for (const modelName of candidateModels) {
@@ -339,6 +340,74 @@ ${computationContext}`,
         explanation: localizedExplanation,
         residual: engineResult.residual || 0,
       };
+
+      if (engineResult.details?.isLinear) {
+        const a = (engineResult.details.a as number) ?? 2;
+        const b = (engineResult.details.b as number) ?? 4;
+        const c = (engineResult.details.c as number) ?? 10;
+        const sol = (engineResult.details.solution as number) ?? 3;
+        const diff = c - b;
+
+        parsed.category = language === 'ar' ? 'الجبر والمعادلات' : 'Algebra & Equations';
+        parsed.topic = language === 'ar' ? 'المعادلات الخطية' : 'Linear Equations';
+        parsed.formulaUsed = language === 'ar'
+          ? 'خاصية الجمع والضرب للمساواة لعزل المتغير: إذا كان أ س + ب = جـ فإن س = (جـ - ب) ÷ أ'
+          : 'Properties of equality for linear isolation: if ax + b = c then x = (c - b) / a';
+
+        const aAr = toArabicDigits(a);
+        const bAr = toArabicDigits(Math.abs(b));
+        const cAr = toArabicDigits(c);
+        const diffAr = toArabicDigits(diff);
+        const solAr = toArabicDigits(sol);
+
+        if (language === 'ar') {
+          parsed.steps = [
+            {
+              stepNumber: 1,
+              title: `طرح ${bAr} من الطرفين`,
+              latex: `${aAr}س + ${bAr} − ${bAr} = ${cAr} − ${bAr}`,
+              explanation: `نطرح الثابت ${bAr} من طرفي المعادلة لعزل الحد المشتمل على المتغير س في الطرف الأيمن.`
+            },
+            {
+              stepNumber: 2,
+              title: 'التبسيط',
+              latex: `${aAr}س = ${diffAr}`,
+              explanation: `نبسّط العمليات الحسابية في طرفي المعادلة (${bAr} − ${bAr} = ٠ في الطرف الأيمن، و ${cAr} − ${bAr} = ${diffAr} في الطرف الأيسر).`
+            },
+            {
+              stepNumber: 3,
+              title: `قسمة الطرفين على ${aAr}`,
+              latex: `${aAr}س ÷ ${aAr} = ${diffAr} ÷ ${aAr}`,
+              explanation: `نقسم طرفي المعادلة على معامل المتغير س (وهو العدد ${aAr}) للحصول على قيمة المتغير س بمفردها.`
+            }
+          ];
+          parsed.finalAnswer = `س = ${solAr}`;
+          parsed.plainAnswer = `س = ${solAr}`;
+        } else {
+          parsed.steps = [
+            {
+              stepNumber: 1,
+              title: `Subtract ${Math.abs(b)} from both sides`,
+              latex: `${a}x + ${b} - ${b} = ${c} - ${b}`,
+              explanation: `Subtract constant ${Math.abs(b)} from both sides to isolate the variable term on the left side.`
+            },
+            {
+              stepNumber: 2,
+              title: 'Simplification',
+              latex: `${a}x = ${diff}`,
+              explanation: `Simplify arithmetic on both sides (${b} - ${b} = 0 on LHS, and ${c} - ${b} = ${diff} on RHS).`
+            },
+            {
+              stepNumber: 3,
+              title: `Divide both sides by ${a}`,
+              latex: `${a}x / ${a} = ${diff} / ${a}`,
+              explanation: `Divide both sides by the coefficient ${a} to solve for variable x.`
+            }
+          ];
+          parsed.finalAnswer = `x = ${sol}`;
+          parsed.plainAnswer = `x = ${sol}`;
+        }
+      }
     }
 
     const solution: MathSolution = {
@@ -392,32 +461,100 @@ ${computationContext}`,
     let plainAnswer = engineResult.calculatedValue || '';
 
     if (engineResult.type === 'roots') {
-      category = isAr ? 'الجبر والمعادلات' : 'Algebra & Equations';
-      topic = isAr ? 'حل المعادلات' : 'Equation Solving';
-      formulaUsed = 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}';
-      steps.push({
-        stepNumber: 1,
-        title: isAr ? 'صياغة المعادلة وتحديد المعاملات' : 'Formulate Equation and Coefficients',
-        latex: problem,
-        explanation: isAr
-          ? 'تم تحليل المعادلة وتحديد المعاملات واستخراج المميز الرياضي بدقة.'
-          : 'Analyzed the equation and determined polynomial coefficients and discriminant.'
-      });
-      steps.push({
-        stepNumber: 2,
-        title: isAr ? 'تطبيق القانون وحساب الجذور' : 'Apply Quadratic / Linear Theorem',
-        latex: engineResult.calculatedValue,
-        explanation: isAr
-          ? `تم حساب الجذور الدقيقة: ${engineResult.calculatedValue}.`
-          : `Computed exact roots: ${engineResult.calculatedValue}.`
-      });
-      steps.push({
-        stepNumber: 3,
-        title: isAr ? 'التحقق الرياضي من الحل بالتعويض' : 'Mathematical Substitution Verification',
-        explanation: isAr
-          ? `تم فحص المتبقي الرياضي عند تعويض الجذور في f(x)=0 وكان المتبقي ${engineResult.residual ?? 0}.`
-          : `Verified roots via direct substitution test into f(x)=0 with residual ${engineResult.residual ?? 0}.`
-      });
+      const isLinear = Boolean(engineResult.details?.isLinear);
+      if (isLinear) {
+        category = isAr ? 'الجبر والمعادلات' : 'Algebra & Equations';
+        topic = isAr ? 'المعادلات الخطية' : 'Linear Equations';
+        formulaUsed = isAr
+          ? 'خاصية الجمع والضرب للمساواة لعزل المتغير: إذا كان أ س + ب = جـ فإن س = (جـ - ب) ÷ أ'
+          : 'Properties of equality for linear isolation: if ax + b = c then x = (c - b) / a';
+
+        const a = (engineResult.details?.a as number) ?? 2;
+        const b = (engineResult.details?.b as number) ?? 4;
+        const c = (engineResult.details?.c as number) ?? 10;
+        const sol = (engineResult.details?.solution as number) ?? 3;
+        const solStr = Number.isInteger(sol) ? sol.toString() : sol.toFixed(2);
+
+        if (isAr) {
+          const aAr = toArabicDigits(a);
+          const bAr = toArabicDigits(Math.abs(b));
+          const cAr = toArabicDigits(c);
+          const diffAr = toArabicDigits(c - b);
+          const solAr = toArabicDigits(solStr);
+
+          steps.push({
+            stepNumber: 1,
+            title: `طرح ${bAr} من الطرفين`,
+            latex: `${aAr}س + ${bAr} − ${bAr} = ${cAr} − ${bAr}`,
+            explanation: `نطرح الثابت ${bAr} من طرفي المعادلة لعزل الحد المشتمل على المتغير س في الطرف الأيمن.`
+          });
+          steps.push({
+            stepNumber: 2,
+            title: 'التبسيط',
+            latex: `${aAr}س = ${diffAr}`,
+            explanation: `نبسّط العمليات الحسابية في طرفي المعادلة (${bAr} − ${bAr} = ٠ في الطرف الأيمن، و ${cAr} − ${bAr} = ${diffAr} في الطرف الأيسر).`
+          });
+          steps.push({
+            stepNumber: 3,
+            title: `قسمة الطرفين على ${aAr}`,
+            latex: `${aAr}س ÷ ${aAr} = ${diffAr} ÷ ${aAr}`,
+            explanation: `نقسم طرفي المعادلة على معامل المتغير س (وهو العدد ${aAr}) للحصول على قيمة المتغير س بمفردها.`
+          });
+
+          finalAnswer = `س = ${solAr}`;
+          plainAnswer = `س = ${solAr}`;
+        } else {
+          const diff = c - b;
+          steps.push({
+            stepNumber: 1,
+            title: `Subtract ${Math.abs(b)} from both sides`,
+            latex: `${a}x + ${b} - ${b} = ${c} - ${b}`,
+            explanation: `Subtract constant ${Math.abs(b)} from both sides to isolate the variable term on the left side.`
+          });
+          steps.push({
+            stepNumber: 2,
+            title: 'Simplification',
+            latex: `${a}x = ${diff}`,
+            explanation: `Simplify arithmetic on both sides (${b} - ${b} = 0 on LHS, and ${c} - ${b} = ${diff} on RHS).`
+          });
+          steps.push({
+            stepNumber: 3,
+            title: `Divide both sides by ${a}`,
+            latex: `${a}x / ${a} = ${diff} / ${a}`,
+            explanation: `Divide both sides by the coefficient ${a} to solve for variable x.`
+          });
+
+          finalAnswer = `x = ${solStr}`;
+          plainAnswer = `x = ${solStr}`;
+        }
+      } else {
+        category = isAr ? 'الجبر والمعادلات' : 'Algebra & Equations';
+        topic = isAr ? 'حل المعادلات' : 'Equation Solving';
+        formulaUsed = 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}';
+        steps.push({
+          stepNumber: 1,
+          title: isAr ? 'صياغة المعادلة وتحديد المعاملات' : 'Formulate Equation and Coefficients',
+          latex: problem,
+          explanation: isAr
+            ? 'تم تحليل المعادلة وتحديد المعاملات واستخراج المميز الرياضي بدقة.'
+            : 'Analyzed the equation and determined polynomial coefficients and discriminant.'
+        });
+        steps.push({
+          stepNumber: 2,
+          title: isAr ? 'تطبيق القانون وحساب الجذور' : 'Apply Quadratic / Linear Theorem',
+          latex: engineResult.calculatedValue,
+          explanation: isAr
+            ? `تم حساب الجذور الدقيقة: ${engineResult.calculatedValue}.`
+            : `Computed exact roots: ${engineResult.calculatedValue}.`
+        });
+        steps.push({
+          stepNumber: 3,
+          title: isAr ? 'التحقق الرياضي من الحل بالتعويض' : 'Mathematical Substitution Verification',
+          explanation: isAr
+            ? `تم فحص المتبقي الرياضي عند تعويض الجذور في f(x)=0 وكان المتبقي ${engineResult.residual ?? 0}.`
+            : `Verified roots via direct substitution test into f(x)=0 with residual ${engineResult.residual ?? 0}.`
+        });
+      }
     } else if (engineResult.type === 'derivative') {
       category = isAr ? 'التفاضل والتكامل' : 'Calculus & Analysis';
       topic = isAr ? 'الاشتقاق وقواعد التفاضل' : 'Differentiation';
@@ -674,6 +811,13 @@ Return a JSON object with:
   ): Promise<string> {
     const isAr = language === 'ar';
     const historyText = history.map(h => `${h.sender === 'user' ? 'Student' : 'Tutor'}: ${h.text}`).join('\n');
+    const isFirstInteraction = history.length === 0 || !history.some(h => h.sender === 'assistant' || h.sender === 'tutor');
+
+    const greetingRule = isFirstInteraction
+      ? (isAr
+          ? `7. Greeting & Identity (FIRST INTERACTION ONLY): This is your very first reply to the student for this math problem. Open your response by warmly introducing yourself as their teacher and assistant at Maidama Math. State explicitly: "أهلًا بك! أنا معلمك ومساعدك في Maidama Math، وسأرافقك خطوة بخطوة لفهم المسألة والوصول إلى الحل الصحيح." and express your readiness to explain the steps. Do not omit the name "Maidama Math".`
+          : `7. Greeting & Identity (FIRST INTERACTION ONLY): This is your very first reply to the student for this math problem. Open your response by warmly introducing yourself as their teacher and assistant at Maidama Math. State explicitly: "Welcome! I am your teacher and assistant at Maidama Math, and I will accompany you step-by-step to understand the problem and reach the correct solution." and express your readiness to explain the solution. Do not omit the name "Maidama Math".`)
+      : `7. Greeting & Identity (SUBSEQUENT INTERACTION): Previous messages exist in this conversation. DO NOT repeat your introduction, DO NOT state your name or Maidama Math again, and DO NOT start with generic welcome pleasantries like "أهلاً بك". Dive directly and cleanly into explaining the student's question.`;
 
     const levelGuidance = {
       beginner: isAr
@@ -719,10 +863,11 @@ ${historyText || '(No previous messages)'}
 3. Structure: Structure your response using clear Markdown formatting with headings (###), numbered steps, bullet points, and bold key terms.
 4. Mathematical Justification: Explain the fundamental reason WHY the step is mathematically valid (e.g. algebraic properties of equality, linearity, calculus definitions, geometric interpretations), and provide intermediate working or mini-examples where helpful.
 5. Equations & Formulas: Write all mathematical expressions in standard LaTeX using $...$ for inline and $$...$$ for standalone formulas.
-6. Context: Explicitly connect your clarification to the student's problem ("${solution.originalQuestion}") and the steps of the verified solution.`;
+6. Context: Explicitly connect your clarification to the student's problem ("${solution.originalQuestion}") and the steps of the verified solution.
+${greetingRule}`;
 
     // Prioritize active and robust models per guidelines (avoid models with zero free-tier quota)
-    const candidateModels = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash'];
+    const candidateModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
     for (const model of candidateModels) {
       try {
         const response = await ai.models.generateContent({
@@ -744,7 +889,7 @@ ${historyText || '(No previous messages)'}
     }
 
     // Deterministic rule-based pedagogical fallback if API is unreachable
-    return this.generateDeterministicTutorAnswer(solution, userQuery, isAr, level);
+    return this.generateDeterministicTutorAnswer(solution, userQuery, isAr, level, isFirstInteraction);
   }
 
   /**
@@ -754,21 +899,43 @@ ${historyText || '(No previous messages)'}
     solution: MathSolution,
     userQuery: string,
     isAr: boolean,
-    level: EducationLevel
+    level: EducationLevel,
+    isFirstInteraction: boolean = true
   ): string {
     const qLower = userQuery.toLowerCase();
 
-    // Check if student asked about a specific step number (1, 2, 3...)
-    const stepMatch = userQuery.match(/(?:الخطوة|خطوة|step)\s*([0-9١-٩]+)/i);
-    if (stepMatch) {
-      const stepNumStr = stepMatch[1].replace(/[١-٩]/g, d => '١٢٣٤٥٦٧٨٩'.indexOf(d) + 1 + '');
-      const stepNum = parseInt(stepNumStr, 10);
-      const foundStep = solution.steps.find(s => s.stepNumber === stepNum);
+    // Welcome greeting introducing Maidama Math - ONLY on first interaction
+    const welcomeGreeting = isFirstInteraction
+      ? (isAr
+          ? 'أهلًا بك! أنا معلمك ومساعدك في Maidama Math، وسأرافقك خطوة بخطوة لفهم المسألة والوصول إلى الحل الصحيح.\n\n'
+          : 'Welcome! I am your teacher and assistant at Maidama Math, and I will accompany you step-by-step to understand the problem and reach the correct solution.\n\n')
+      : '';
+
+    // Check if student asked about a specific step number (1, 2, 3... or ordinals)
+    let matchedStepNumber: number | null = null;
+    const numStepMatch = userQuery.match(/(?:[وفلب]?الخطوة|خطوة|step)\s*([0-9١-٩]+)/i);
+    if (numStepMatch) {
+      const stepNumStr = numStepMatch[1].replace(/[١-٩]/g, d => '١٢٣٤٥٦٧٨٩'.indexOf(d) + 1 + '');
+      matchedStepNumber = parseInt(stepNumStr, 10);
+    } else if (/(?:[وفلب]?الخطوة|خطوة)\s*(?:الأولى|الاولى)/i.test(userQuery)) {
+      matchedStepNumber = 1;
+    } else if (/(?:[وفلب]?الخطوة|خطوة)\s*(?:الثانية|التانية)/i.test(userQuery)) {
+      matchedStepNumber = 2;
+    } else if (/(?:[وفلب]?الخطوة|خطوة)\s*(?:الثالثة|التالتة)/i.test(userQuery)) {
+      matchedStepNumber = 3;
+    } else if (/(?:[وفلب]?الخطوة|خطوة)\s*(?:الرابعة)/i.test(userQuery)) {
+      matchedStepNumber = 4;
+    } else if (/(?:[وفلب]?الخطوة|خطوة)\s*(?:الخامسة)/i.test(userQuery)) {
+      matchedStepNumber = 5;
+    }
+
+    if (matchedStepNumber !== null) {
+      const foundStep = solution.steps.find(s => s.stepNumber === matchedStepNumber);
       if (foundStep) {
         if (isAr) {
-          return `### توضيح تفصيلي للخطوة ${foundStep.stepNumber}: ${foundStep.title}
+          return `${welcomeGreeting}### توضيح تفصيلي للخطوة ${foundStep.stepNumber}: ${foundStep.title}
 
-أهلاً بك! دعنا نحلل هذه الخطوة بعمق لتفهم القاعدة الرياضية الكامنة خلفها:
+دعنا نحلل هذه الخطوة بعمق لتفهم القاعدة الرياضية الكامنة خلفها:
 
 1. **العملية المنجزة:**
 ${foundStep.explanation}
@@ -782,9 +949,9 @@ $$${foundStep.latex || ''}$$
 4. **النتيجة الوسيطة لهذه الخطوة:**
 قادتنا هذه الخطوة مباشرة إلى تهيئة المعادلة للخطوة التالية (${solution.steps[foundStep.stepNumber]?.title || 'استخلاص النتيجة النهائية'}).`;
         } else {
-          return `### In-Depth Breakdown of Step ${foundStep.stepNumber}: ${foundStep.title}
+          return `${welcomeGreeting}### In-Depth Breakdown of Step ${foundStep.stepNumber}: ${foundStep.title}
 
-Welcome! Let's examine the mathematical reasoning behind this step in detail:
+Let's examine the mathematical reasoning behind this step in detail:
 
 1. **Transformation Applied:**
 ${foundStep.explanation}
@@ -804,7 +971,7 @@ This intermediate result directly sets up the subsequent operations leading to t
     // Check if student asked about rule/formula/theorem
     if (qLower.includes('قاعدة') || qLower.includes('نظرية') || qLower.includes('قانون') || qLower.includes('rule') || qLower.includes('formula') || qLower.includes('theorem')) {
       if (isAr) {
-        return `### القاعدة والنظرية الرياضية المعتمدة في هذا الحل
+        return `${welcomeGreeting}### القاعدة والنظرية الرياضية المعتمدة في هذا الحل
 
 القاعدة الأساسية المعتمدة هي:
 **${solution.formulaUsed || 'قواعد التحويلات الجبرية والتحليل الرياضي المعياري'}**
@@ -818,7 +985,7 @@ ${solution.assumptions?.map(a => `- ${a}`).join('\n') || '- مجال الأعد�
 • **النتيجة الناتجة عن تطبيقها:**
 تطبيق هذه النظرية بدقة قادنا مباشرة إلى النتيجة المؤكدة: **${solution.finalAnswer}**.`;
       } else {
-        return `### Foundational Theorem and Mathematical Rule
+        return `${welcomeGreeting}### Foundational Theorem and Mathematical Rule
 
 The primary mathematical rule governing this derivation is:
 **${solution.formulaUsed || 'Standard algebraic and analytical principles'}**
@@ -838,7 +1005,7 @@ Faithful application of this principle yields the final verified answer: **${sol
     if (qLower.includes('بديل') || qLower.includes('طريقة أخرى') || qLower.includes('alternative') || qLower.includes('another way')) {
       if (solution.alternativeMethod) {
         if (isAr) {
-          return `### طريقة حل بديلة: ${solution.alternativeMethod.title}
+          return `${welcomeGreeting}### طريقة حل بديلة: ${solution.alternativeMethod.title}
 
 نعم، يمكن حل هذه المسألة بطريقة أخرى صحيحة رياضياً:
 
@@ -851,7 +1018,7 @@ ${solution.alternativeMethod.latex ? `$$${solution.alternativeMethod.latex}$$` :
 3. **مقارنة الطريقتين:**
 كلا النهجين صحيحان استنتاجياً، ويصلان إلى نفس النتيجة النهائية المؤكدة: **${solution.finalAnswer}**، ولكن الطريقة الأولى قد تكون أكثر ملاءمة للمناهج الدراسية المعيارية.`;
         } else {
-          return `### Alternative Solution Method: ${solution.alternativeMethod.title}
+          return `${welcomeGreeting}### Alternative Solution Method: ${solution.alternativeMethod.title}
 
 Yes, this problem can alternatively be solved using another valid approach:
 
@@ -869,9 +1036,9 @@ Both methods are deductive and yield the identical verified result: **${solution
 
     // Default pedagogical step summary
     if (isAr) {
-      return `### الشرح التعليمي الشامل لمسألة: "${solution.originalQuestion}"
+      return `${welcomeGreeting}### الشرح التعليمي الشامل لمسألة: "${solution.originalQuestion}"
 
-أهلاً بك! يسعدني إرشادك خلال خطوات الحل بالتفصيل:
+يسعدني إرشادك خلال خطوات الحل بالتفصيل:
 
 • **المسألة والهدف:** ${solution.interpretedProblem}
 • **القاعدة المستخدمة:** ${solution.formulaUsed || 'القوانين الرياضية المعيارية'}
@@ -885,9 +1052,9 @@ $$${solution.plainAnswer || solution.finalAnswer}$$
 
 إذا أردت معرفة سبب أي خطوة أو قانون معين، اكتب لي مثل: *"لماذا قمنا بالخطوة 1؟"* وسأشرحها لك فوراً بالتفصيل!`;
     } else {
-      return `### Comprehensive Pedagogical Explanation: "${solution.originalQuestion}"
+      return `${welcomeGreeting}### Comprehensive Pedagogical Explanation: "${solution.originalQuestion}"
 
-Hello! I am happy to guide you through each stage of this solution:
+I am happy to guide you through each stage of this solution:
 
 • **Problem Objective:** ${solution.interpretedProblem}
 • **Applied Rule:** ${solution.formulaUsed || 'Standard Mathematical Principles'}

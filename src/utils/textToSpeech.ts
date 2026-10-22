@@ -569,3 +569,56 @@ export function getBestVoiceForLanguage(
   // 4. Return the first matching voice
   return matchedVoices[0];
 }
+
+export interface NeuralSpeechResponse {
+  success: boolean;
+  audioBase64?: string;
+  mimeType?: string;
+  cached?: boolean;
+  error?: string;
+  fallbackRecommended?: boolean;
+}
+
+/**
+ * Fetch high-fidelity studio neural audio for a given math speech segment.
+ */
+export async function fetchNeuralSpeechAudio(
+  text: string,
+  language: 'ar' | 'en',
+  voice: string = 'Charon',
+  signal?: AbortSignal
+): Promise<NeuralSpeechResponse> {
+  try {
+    const res = await fetch('/api/speech/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language, voice }),
+      signal,
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return { success: false, fallbackRecommended: false, error: 'Aborted' };
+    }
+    return {
+      success: false,
+      fallbackRecommended: true,
+      error: err?.message || 'Network error',
+    };
+  }
+}
+
+/**
+ * Helper to convert base64 audio response to a playable object URL
+ */
+export function convertBase64ToBlobUrl(base64: string, mimeType: string = 'audio/wav'): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+

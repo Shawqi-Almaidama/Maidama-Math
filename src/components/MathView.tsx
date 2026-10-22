@@ -23,6 +23,7 @@ export const MathView: React.FC<MathViewProps> = ({ math, block = false, classNa
       return katex.renderToString(cleaned, {
         displayMode: block,
         throwOnError: false,
+        strict: 'ignore',
         output: 'html',
       });
     } catch (err) {
@@ -101,7 +102,11 @@ export const MixedMathText: React.FC<{ text: string; className?: string }> = ({ 
         if (p.type === 'inline-math') {
           return <MathView key={idx} math={p.content} block={false} />;
         }
-        return <span key={idx}>{p.content}</span>;
+        return (
+          <span key={idx} dir="auto">
+            {p.content}
+          </span>
+        );
       })}
     </span>
   );

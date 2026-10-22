@@ -15,7 +15,7 @@ import {
   FileText,
   CheckCircle2,
   Volume2,
-  GraduationCap
+  GraduationCap,
 } from 'lucide-react';
 import { ExplanationStyle, EducationLevel, Language } from '../types/math.ts';
 import { useLocalization } from '../localization/LocalizationContext.tsx';
@@ -26,6 +26,7 @@ import {
   saveGuestPreferences,
   saveUserPreferences,
   broadcastPreferences,
+  SpeechEngineType,
 } from '../utils/preferencesManager.ts';
 
 interface SettingsModalProps {
@@ -60,29 +61,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [draftLevel, setDraftLevel] = useState<EducationLevel>(defaultLevel);
   const [draftStyle, setDraftStyle] = useState<ExplanationStyle>(defaultStyle);
   const [draftSpeechRate, setDraftSpeechRate] = useState<number>(() => getActivePreferences().speechRate ?? 0.9);
+  const [draftSpeechEngine, setDraftSpeechEngine] = useState<SpeechEngineType>(() => getActivePreferences().speechEngine ?? 'neural');
+  const [draftSpeechNeuralVoice, setDraftSpeechNeuralVoice] = useState<string>(() => getActivePreferences().speechNeuralVoice ?? 'Charon');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Sync draft state with incoming active props on modal open
   useEffect(() => {
     if (isOpen) {
+      const activePrefs = getActivePreferences();
       setDraftLang(activeLang);
       setDraftTheme(theme);
       setDraftLevel(defaultLevel);
       setDraftStyle(defaultStyle);
-      setDraftSpeechRate(getActivePreferences().speechRate ?? 0.9);
+      setDraftSpeechRate(activePrefs.speechRate ?? 0.9);
+      setDraftSpeechEngine(activePrefs.speechEngine ?? 'neural');
+      setDraftSpeechNeuralVoice(activePrefs.speechNeuralVoice ?? 'Charon');
       setSavedSuccess(false);
     }
   }, [isOpen, activeLang, theme, defaultLevel, defaultStyle]);
 
   if (!isOpen) return null;
 
-  const currentSavedRate = getActivePreferences().speechRate ?? 0.9;
+  const currentPrefs = getActivePreferences();
+  const currentSavedRate = currentPrefs.speechRate ?? 0.9;
+  const currentSavedEngine = currentPrefs.speechEngine ?? 'neural';
+  const currentSavedVoice = currentPrefs.speechNeuralVoice ?? 'Charon';
+
   const hasDraftChanges =
     draftLang !== activeLang ||
     draftTheme !== theme ||
     draftLevel !== defaultLevel ||
     draftStyle !== defaultStyle ||
-    Math.abs(draftSpeechRate - currentSavedRate) > 0.01;
+    Math.abs(draftSpeechRate - currentSavedRate) > 0.01 ||
+    draftSpeechEngine !== currentSavedEngine ||
+    draftSpeechNeuralVoice !== currentSavedVoice;
 
   const handleSaveSettings = () => {
     // 1. Apply Language
@@ -106,12 +118,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       onStyleChange(draftStyle);
     }
 
-    // 5. Apply Speech Rate
+    // 5. Apply Speech Engine & Preferences
+    const speechUpdates: Partial<{
+      speechRate: number;
+      speechEngine: SpeechEngineType;
+      speechNeuralVoice: string;
+    }> = {};
+
     if (Math.abs(draftSpeechRate - currentSavedRate) > 0.01) {
+      speechUpdates.speechRate = draftSpeechRate;
+    }
+    if (draftSpeechEngine !== currentSavedEngine) {
+      speechUpdates.speechEngine = draftSpeechEngine;
+    }
+    if (draftSpeechNeuralVoice !== currentSavedVoice) {
+      speechUpdates.speechNeuralVoice = draftSpeechNeuralVoice;
+    }
+
+    if (Object.keys(speechUpdates).length > 0) {
       if (user?.id) {
-        saveUserPreferences(user.id, { speechRate: draftSpeechRate });
+        saveUserPreferences(user.id, speechUpdates);
       } else {
-        saveGuestPreferences({ speechRate: draftSpeechRate });
+        saveGuestPreferences(speechUpdates);
       }
       broadcastPreferences(getActivePreferences(), user?.id || null);
     }
@@ -129,6 +157,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDraftLevel(defaultLevel);
     setDraftStyle(defaultStyle);
     setDraftSpeechRate(currentSavedRate);
+    setDraftSpeechEngine(currentSavedEngine);
+    setDraftSpeechNeuralVoice(currentSavedVoice);
     setSavedSuccess(false);
     onClose();
   };
@@ -359,11 +389,97 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </span>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
+          <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
               {t('settings.audioDesc')}
             </p>
 
+            {/* Engine Selector */}
+            <div className="space-y-1.5 pt-1">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                {t('settings.audioEngineLabel')}
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftSpeechEngine('neural')}
+                  className={`p-2.5 rounded-xl border text-start transition cursor-pointer flex items-center justify-between ${
+                    draftSpeechEngine === 'neural'
+                      ? 'bg-emerald-50/90 dark:bg-emerald-950/70 border-emerald-400 dark:border-emerald-600 text-emerald-950 dark:text-emerald-200 shadow-2xs'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold">{t('settings.audioEngineNeural')}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {isRTL ? 'نطق فصيح ووقفات هادئة (الافتراضي)' : 'High fidelity & natural teacher tone'}
+                      </div>
+                    </div>
+                  </div>
+                  {draftSpeechEngine === 'neural' && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDraftSpeechEngine('local')}
+                  className={`p-2.5 rounded-xl border text-start transition cursor-pointer flex items-center justify-between ${
+                    draftSpeechEngine === 'local'
+                      ? 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-400 dark:border-indigo-600 text-indigo-950 dark:text-indigo-200 shadow-2xs'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <GraduationCap className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold">{t('settings.audioEngineLocal')}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {isRTL ? 'يعمل بدون شبكة كبديل احتياطي' : 'Offline synthesiser fallback'}
+                      </div>
+                    </div>
+                  </div>
+                  {draftSpeechEngine === 'local' && (
+                    <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Persona Selector (when neural is chosen) */}
+            {draftSpeechEngine === 'neural' && (
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                  {t('settings.audioVoiceLabel')}
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {[
+                    { id: 'Charon', nameAr: 'شارون (أستاذ وقور)', nameEn: 'Charon (Professor)' },
+                    { id: 'Kore', nameAr: 'كوري (أستاذة واضحة)', nameEn: 'Kore (Academic)' },
+                    { id: 'Fenrir', nameAr: 'فنرير (مذيع متزن)', nameEn: 'Fenrir (Broadcaster)' },
+                    { id: 'Puck', nameAr: 'باك (تفاعلي مشرق)', nameEn: 'Puck (Engaging)' },
+                    { id: 'Zephyr', nameAr: 'زفير (صبور ورزين)', nameEn: 'Zephyr (Mild)' },
+                  ].map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setDraftSpeechNeuralVoice(v.id)}
+                      className={`p-2 text-xs font-semibold rounded-xl border text-center transition cursor-pointer ${
+                        draftSpeechNeuralVoice === v.id
+                          ? 'bg-indigo-600 text-white border-indigo-500 shadow-2xs'
+                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900'
+                      }`}
+                    >
+                      {isRTL ? v.nameAr : v.nameEn}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Speed / Rate Selector */}
             <div className="space-y-1.5 pt-1">
               <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
                 {t('settings.audioRateLabel')}

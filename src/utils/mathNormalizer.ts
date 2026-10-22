@@ -97,16 +97,69 @@ export function toArabicDigits(str: string | number): string {
 }
 
 /**
+ * Converts Arabic-Indic digits to Western digits 0-9
+ */
+export function toWesternDigits(str: string | number): string {
+  return String(str).replace(/[٠-٩۰-۹]/g, (d) => ARABIC_INDIC_DIGITS[d] || d);
+}
+
+/**
+ * Transforms a mathematical formula safely into Arabic presentation format:
+ * - Converts algebraic variables x -> س, y -> ص, z -> ع without breaking LaTeX macros (\frac, \text, \pmatrix, etc.)
+ * - Converts Western digits 0-9 to Arabic-Indic digits ٠-٩ outside LaTeX command names
+ * - Preserves matrix structures, signs, and KaTeX compatibility
+ */
+export function formatArabicMathForDisplay(latex: string): string {
+  if (!latex) return '';
+
+  const protectedTokens: string[] = [];
+  // Match LaTeX macros like \frac, \sqrt, \begin{pmatrix}, \end{pmatrix}, \text{...}, or standard functions
+  const tokenized = latex.replace(
+    /\\(?:begin|end)\{[a-zA-Z*]+\}|\\[a-zA-Z]+|\b(?:sin|cos|tan|cot|sec|csc|exp|log|ln|det|inv|min|max|lim|gcd|lcm)\b/g,
+    (match) => {
+      const idx = protectedTokens.length;
+      protectedTokens.push(match);
+      return `__PROT_${idx}__`;
+    }
+  );
+
+  // Replace variable letters x, y, z when not part of identifiers
+  // Handle cases like 2x, x+4, (x), x=3, x^2, x_1
+  const withArabicVars = tokenized
+    .replace(/(^|[^a-zA-Z_])x(?![a-zA-Z_])/g, '$1س')
+    .replace(/(^|[^a-zA-Z_])y(?![a-zA-Z_])/g, '$1ص')
+    .replace(/(^|[^a-zA-Z_])z(?![a-zA-Z_])/g, '$1ع');
+
+  // Split by protected tokens so we only convert digits in mathematical literals
+  const parts = withArabicVars.split(/(__PROT_\d+__)/g);
+  const converted = parts.map((part) => {
+    const match = part.match(/^__PROT_(\d+)__$/);
+    if (match) {
+      return protectedTokens[parseInt(match[1], 10)];
+    }
+    // Convert 0-9 to Arabic-Indic digits ٠-٩
+    return part.replace(/\d/g, (d) => WESTERN_TO_ARABIC_DIGITS[d] || d);
+  }).join('');
+
+  return converted;
+}
+
+/**
+ * Transforms an Arabic mathematical formula safely into English / Western presentation format
+ */
+export function formatEnglishMathForDisplay(latex: string): string {
+  if (!latex) return '';
+
+  return latex
+    .replace(/[٠-٩]/g, (d) => ARABIC_INDIC_DIGITS[d] || d)
+    .replace(/س/g, 'x')
+    .replace(/ص/g, 'y')
+    .replace(/ع/g, 'z');
+}
+
+/**
  * Formats mathematical variables for Arabic presentation
  */
 export function formatArabicMathVariables(latexOrText: string): string {
-  if (!latexOrText) return '';
-  // Convert isolated variable identifiers x, y, z to Arabic س, ص, ع
-  return latexOrText
-    .replace(/\bx\b/g, 'س')
-    .replace(/\by\b/g, 'ص')
-    .replace(/\bz\b/g, 'ع')
-    .replace(/\bsin\b/g, 'جا')
-    .replace(/\bcos\b/g, 'جتا')
-    .replace(/\btan\b/g, 'ظا');
+  return formatArabicMathForDisplay(latexOrText);
 }

@@ -6,6 +6,7 @@ import { geminiMathSolver } from './src/server/geminiMathSolver.ts';
 import { mathEngine } from './src/server/mathEngine.ts';
 import { MathCategory } from './src/types/math.ts';
 import { authStore } from './src/server/authStore.ts';
+import { neuralSpeechEngine } from './src/server/neuralSpeechEngine.ts';
 
 dotenv.config();
 
@@ -473,6 +474,43 @@ app.post('/api/extract-image', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Image extraction error:', error);
     res.status(500).json({ error: error.message || 'Image math extraction failed.' });
+  }
+});
+
+// Neural Speech Synthesis endpoints (Studio Educator Quality)
+app.get('/api/speech/voices', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    voices: neuralSpeechEngine.getAvailableVoices(),
+  });
+});
+
+app.post('/api/speech/synthesize', async (req: Request, res: Response) => {
+  try {
+    const { text, language, voice, stylePrompt } = req.body;
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'Text string is required.' });
+    }
+
+    const result = await neuralSpeechEngine.synthesize({
+      text,
+      language: language === 'en' ? 'en' : 'ar',
+      voice: voice || 'Charon',
+      stylePrompt,
+    });
+
+    if (!result.success) {
+      return res.status(result.fallbackRecommended ? 200 : 500).json(result);
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Speech synthesis endpoint error:', error);
+    res.status(200).json({
+      success: false,
+      error: error?.message || 'Speech synthesis failed.',
+      fallbackRecommended: true,
+    });
   }
 });
 

@@ -35,11 +35,32 @@
   direction: ltr !important;
   display: inline-block;
   vertical-align: middle;
+  unicode-bidi: isolate !important;
 }
 
 .katex {
   color: inherit !important;
   text-rendering: auto;
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+.katex * {
+  direction: ltr !important;
+}
+
+.katex-display {
+  direction: ltr !important;
+  text-align: center;
+}
+
+.katex .mtable {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+.katex .mord, .katex .mtext, .katex .mbin, .katex .mrel {
+  font-family: var(--font-arabic), KaTeX_Main, 'Times New Roman', serif;
 }
 
 /* Custom scrollbar for mathematical expressions */

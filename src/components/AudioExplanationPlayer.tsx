@@ -13,14 +13,16 @@ import {
   Sliders,
   FileText,
   AlertCircle,
-  ChevronDown,
-  ChevronUp,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import { MathSolution } from '../types/math.ts';
 import {
   buildSolutionSpeechScript,
   getAvailableVoicesForLanguage,
   getBestVoiceForLanguage,
+  fetchNeuralSpeechAudio,
+  convertBase64ToBlobUrl,
   SpeechSegment,
   VoiceInfo,
 } from '../utils/textToSpeech.ts';
@@ -29,6 +31,7 @@ import {
   getActivePreferences,
   saveGuestPreferences,
   saveUserPreferences,
+  SpeechEngineType,
 } from '../utils/preferencesManager.ts';
 
 interface AudioExplanationPlayerProps {
@@ -44,23 +47,70 @@ const SPEED_OPTIONS = [
   { rate: 1.25, labelAr: '1.25x (سريع)', labelEn: '1.25x (Brisk)' },
 ];
 
+const NEURAL_VOICES = [
+  {
+    id: 'Charon',
+    nameAr: 'شارون (أستاذ وقور وهادئ - موصى به)',
+    nameEn: 'Charon (Calm & Authoritative Professor)',
+    descAr: 'نبرة عميقة متزنة ومطمئنة تشبه أستاذ الجامعة المتمكن',
+    descEn: 'Deep, measured, reassuring academic professor tone',
+    gender: 'male',
+  },
+  {
+    id: 'Kore',
+    nameAr: 'كوري (أستاذة واضحة ومطمئنة)',
+    nameEn: 'Kore (Clear & Gentle Academic)',
+    descAr: 'صوت نسائي تربوي هادئ وواضح النطق للخطوات والمعادلات',
+    descEn: 'Gentle, clear pedagogical female tone with crisp articulation',
+    gender: 'female',
+  },
+  {
+    id: 'Fenrir',
+    nameAr: 'فنرير (مذيع تعليمي متزن)',
+    nameEn: 'Fenrir (Balanced Educational Broadcaster)',
+    descAr: 'إلقاء إذاعي بيداغوجي واضح التمفصل وجميل المخارج',
+    descEn: 'Articulate educational broadcaster with expressive transitions',
+    gender: 'male',
+  },
+  {
+    id: 'Puck',
+    nameAr: 'باك (شرح تفاعلي مشرق)',
+    nameEn: 'Puck (Engaging & Lively Tutor)',
+    descAr: 'إيقاع مشرق ومحفز للتركيز وحل المسائل الصعبة',
+    descEn: 'Bright, motivating pace ideal for engaging step exploration',
+    gender: 'male',
+  },
+  {
+    id: 'Zephyr',
+    nameAr: 'زفير (شرح صبور ورزين)',
+    nameEn: 'Zephyr (Patient & Mild Instructor)',
+    descAr: 'نبرة هادئة ورصينة ومريحة للاستماع الطويل',
+    descEn: 'Soft, patient delivery suited for extensive study sessions',
+    gender: 'female',
+  },
+];
+
 export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ solution, language }) => {
   const { user } = useAuth();
   const isAr = language === 'ar';
 
-  const [isSupported, setIsSupported] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [fallbackActive, setFallbackActive] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
 
   // Load saved preferences
   const initialPrefs = useMemo(() => getActivePreferences(), []);
+  const [engine, setEngine] = useState<SpeechEngineType>(initialPrefs.speechEngine ?? 'neural');
+  const [neuralVoice, setNeuralVoice] = useState<string>(initialPrefs.speechNeuralVoice ?? 'Charon');
   const [speechRate, setSpeechRate] = useState<number>(initialPrefs.speechRate ?? 0.9);
-  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>(initialPrefs.speechVoiceURI ?? '');
+  const [selectedLocalVoiceURI, setSelectedLocalVoiceURI] = useState<string>(initialPrefs.speechVoiceURI ?? '');
 
-  // Available voices
-  const [availableVoices, setAvailableVoices] = useState<VoiceInfo[]>([]);
+  // Local voices for fallback/offline
+  const [availableLocalVoices, setAvailableLocalVoices] = useState<VoiceInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
 
@@ -74,93 +124,177 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   scriptRef.current = script;
 
   const isPlayingRef = useRef(false);
+  const activeEngineRef = useRef<'neural' | 'local'>('neural');
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const heartbeatTimerRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const audioBlobMapRef = useRef<Map<number, string>>(new Map());
 
-  // Check Web Speech API support and load available voices
+  // Check Web Speech API support and load available local voices
   useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      setIsSupported(false);
-      return;
-    }
+    if (typeof window === 'undefined') return;
 
-    const refreshVoices = () => {
+    const refreshLocalVoices = () => {
       if (!window.speechSynthesis) return;
       const voices = getAvailableVoicesForLanguage(language);
-      setAvailableVoices(voices);
+      setAvailableLocalVoices(voices);
 
-      // If user hasn't selected a valid voice, pick the best one
-      if (voices.length > 0) {
-        const best = getBestVoiceForLanguage(language, selectedVoiceURI);
+      if (voices.length > 0 && !selectedLocalVoiceURI) {
+        const best = getBestVoiceForLanguage(language, selectedLocalVoiceURI);
         if (best) {
-          setSelectedVoiceURI(best.voiceURI);
+          setSelectedLocalVoiceURI(best.voiceURI);
         }
       }
     };
 
-    refreshVoices();
-
-    // Listen to voiceschanged event
-    if (window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = refreshVoices;
+    refreshLocalVoices();
+    if (window.speechSynthesis?.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = refreshLocalVoices;
     }
-    window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoices);
+    window.speechSynthesis?.addEventListener?.('voiceschanged', refreshLocalVoices);
 
     return () => {
-      window.speechSynthesis.removeEventListener?.('voiceschanged', refreshVoices);
+      window.speechSynthesis?.removeEventListener?.('voiceschanged', refreshLocalVoices);
     };
-  }, [language]);
+  }, [language, selectedLocalVoiceURI]);
 
-  // Stop speech whenever problem or language changes
+  // Clean up blob URLs when solution or language changes
   useEffect(() => {
-    stopSpeech();
+    stopAllAudio();
+    // Revoke previous blob URLs
+    audioBlobMapRef.current.forEach((url) => {
+      URL.revokeObjectURL(url);
+    });
+    audioBlobMapRef.current.clear();
     setCurrentSegmentIndex(0);
-  }, [solution.originalQuestion, solution.finalAnswer, language]);
+    setFallbackActive(false);
+    setFallbackNotice(null);
+  }, [solution.id, solution.originalQuestion, solution.finalAnswer, language]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopSpeech();
+      stopAllAudio();
+      audioBlobMapRef.current.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+      audioBlobMapRef.current.clear();
     };
   }, []);
 
-  // Persist rate & voice settings to the appropriate partition (account or guest)
+  // Stop any active audio source cleanly
+  const stopAllAudio = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current.onended = null;
+      audioElementRef.current.onerror = null;
+      audioElementRef.current.src = '';
+      audioElementRef.current = null;
+    }
+
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
+    clearInterval(heartbeatTimerRef.current);
+    setIsPlaying(false);
+    setIsPaused(false);
+    setIsLoadingAudio(false);
+    isPlayingRef.current = false;
+  }, []);
+
+  // Save preferences helper
+  const persistPreferences = (updates: Partial<{
+    speechEngine: SpeechEngineType;
+    speechNeuralVoice: string;
+    speechRate: number;
+    speechVoiceURI: string;
+  }>) => {
+    if (user?.id) {
+      saveUserPreferences(user.id, updates);
+    } else {
+      saveGuestPreferences(updates);
+    }
+  };
+
   const handleRateChange = (newRate: number) => {
     setSpeechRate(newRate);
-    if (user?.id) {
-      saveUserPreferences(user.id, { speechRate: newRate });
-    } else {
-      saveGuestPreferences({ speechRate: newRate });
+    persistPreferences({ speechRate: newRate });
+
+    if (audioElementRef.current) {
+      audioElementRef.current.playbackRate = newRate;
     }
 
-    // If currently speaking, restart current segment with the new rate
     if (isPlayingRef.current) {
-      speakSegment(currentSegmentIndex, newRate, selectedVoiceURI);
+      speakSegment(currentSegmentIndex, newRate);
     }
   };
 
-  const handleVoiceChange = (voiceURI: string) => {
-    setSelectedVoiceURI(voiceURI);
-    if (user?.id) {
-      saveUserPreferences(user.id, { speechVoiceURI: voiceURI });
-    } else {
-      saveGuestPreferences({ speechVoiceURI: voiceURI });
-    }
+  const handleEngineChange = (newEngine: SpeechEngineType) => {
+    setEngine(newEngine);
+    persistPreferences({ speechEngine: newEngine });
+    setFallbackActive(false);
+    setFallbackNotice(null);
 
-    // If currently speaking, restart current segment with the new voice
     if (isPlayingRef.current) {
-      speakSegment(currentSegmentIndex, speechRate, voiceURI);
+      speakSegment(currentSegmentIndex, undefined, undefined, newEngine === 'local');
     }
   };
 
-  // Chromium Web Speech API safe speak function
-  const speakSegment = useCallback(
-    (index: number, overrideRate?: number, overrideVoiceURI?: string) => {
+  const handleNeuralVoiceChange = (voiceId: string) => {
+    setNeuralVoice(voiceId);
+    persistPreferences({ speechNeuralVoice: voiceId });
+
+    // Invalidate blob cache since voice changed
+    audioBlobMapRef.current.forEach((url) => URL.revokeObjectURL(url));
+    audioBlobMapRef.current.clear();
+
+    if (isPlayingRef.current && engine === 'neural') {
+      speakSegment(currentSegmentIndex, undefined, voiceId);
+    }
+  };
+
+  const handleLocalVoiceChange = (voiceURI: string) => {
+    setSelectedLocalVoiceURI(voiceURI);
+    persistPreferences({ speechVoiceURI: voiceURI });
+
+    if (isPlayingRef.current && (engine === 'local' || fallbackActive)) {
+      speakLocalSegment(currentSegmentIndex, speechRate, voiceURI);
+    }
+  };
+
+  // Pre-fetch next segment in background to eliminate transition latency
+  const prefetchNextSegment = useCallback(
+    async (nextIndex: number, voice: string) => {
+      const currentScript = scriptRef.current;
+      if (nextIndex < 0 || nextIndex >= currentScript.length) return;
+      if (audioBlobMapRef.current.has(nextIndex)) return;
+
+      const seg = currentScript[nextIndex];
+      try {
+        const res = await fetchNeuralSpeechAudio(seg.text, language, voice);
+        if (res.success && res.audioBase64) {
+          const blobUrl = convertBase64ToBlobUrl(res.audioBase64, res.mimeType || 'audio/wav');
+          audioBlobMapRef.current.set(nextIndex, blobUrl);
+        }
+      } catch {
+        // Silently ignore prefetch errors
+      }
+    },
+    [language]
+  );
+
+  // Local Web Speech API playback
+  const speakLocalSegment = useCallback(
+    (index: number, overrideRate?: number, overrideLocalVoiceURI?: string) => {
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
 
       const currentScript = scriptRef.current;
       if (index < 0 || index >= currentScript.length) {
-        // Finished script
         setIsPlaying(false);
         setIsPaused(false);
         setCurrentSegmentIndex(0);
@@ -170,24 +304,25 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       }
 
       window.speechSynthesis.cancel();
+      activeEngineRef.current = 'local';
       setCurrentSegmentIndex(index);
       isPlayingRef.current = true;
       setIsPlaying(true);
       setIsPaused(false);
+      setIsLoadingAudio(false);
 
       const segment = currentScript[index];
       const utterance = new SpeechSynthesisUtterance(segment.text);
       currentUtteranceRef.current = utterance;
 
       const rateToUse = overrideRate ?? speechRate;
-      const voiceURIToUse = overrideVoiceURI ?? selectedVoiceURI;
+      const voiceURIToUse = overrideLocalVoiceURI ?? selectedLocalVoiceURI;
 
       utterance.rate = rateToUse;
       utterance.pitch = 1.0;
       utterance.volume = isMuted ? 0 : 1.0;
       utterance.lang = language === 'ar' ? 'ar-SA' : 'en-US';
 
-      // Pick chosen voice or best fallback
       const chosenVoice = getBestVoiceForLanguage(language, voiceURIToUse);
       if (chosenVoice) {
         utterance.voice = chosenVoice;
@@ -196,7 +331,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       utterance.onend = () => {
         clearInterval(heartbeatTimerRef.current);
         if (isPlayingRef.current) {
-          // Add a calm, natural pedagogical pause between sections (350ms)
+          // Pedagogical pause between steps
           setTimeout(() => {
             if (isPlayingRef.current) {
               speakSegment(index + 1);
@@ -206,17 +341,15 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       };
 
       utterance.onerror = (e) => {
-        // Ignore user cancellation errors
         if (e.error === 'canceled' || e.error === 'interrupted') return;
-        console.warn('SpeechSynthesis error:', e);
+        console.warn('SpeechSynthesis local error:', e);
         clearInterval(heartbeatTimerRef.current);
         setIsPlaying(false);
         setIsPaused(false);
         isPlayingRef.current = false;
       };
 
-      // Workaround for Chromium pause/freeze bug on long utterances:
-      // Heartbeat pulse to keep the audio engine alive
+      // Heartbeat pulse for Chromium pause/freeze bug
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = setInterval(() => {
         if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
@@ -227,14 +360,131 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
 
       window.speechSynthesis.speak(utterance);
     },
-    [isMuted, language, selectedVoiceURI, speechRate]
+    [isMuted, language, selectedLocalVoiceURI, speechRate]
+  );
+
+  // Neural Studio Audio playback
+  const playNeuralSegment = useCallback(
+    async (index: number, overrideRate?: number, overrideVoice?: string) => {
+      const currentScript = scriptRef.current;
+      if (index < 0 || index >= currentScript.length) {
+        setIsPlaying(false);
+        setIsPaused(false);
+        setCurrentSegmentIndex(0);
+        isPlayingRef.current = false;
+        return;
+      }
+
+      // Stop previous local or neural sound
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current.src = '';
+      }
+
+      abortControllerRef.current?.abort();
+      const abortCtrl = new AbortController();
+      abortControllerRef.current = abortCtrl;
+
+      activeEngineRef.current = 'neural';
+      setCurrentSegmentIndex(index);
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      setIsPaused(false);
+
+      const segment = currentScript[index];
+      const rateToUse = overrideRate ?? speechRate;
+      const voiceToUse = overrideVoice ?? neuralVoice;
+
+      let blobUrl = audioBlobMapRef.current.get(index);
+
+      if (!blobUrl) {
+        setIsLoadingAudio(true);
+        try {
+          const res = await fetchNeuralSpeechAudio(segment.text, language, voiceToUse, abortCtrl.signal);
+          if (!res.success || !res.audioBase64) {
+            setFallbackActive(true);
+            setFallbackNotice(
+              isAr
+                ? 'يتم الشرح الآن بصوت المتصفح الذكي لضمان استمرار الحل بسلاسة وبشكل مجاني'
+                : 'Playing with intelligent local browser voice for seamless, free playback'
+            );
+            speakLocalSegment(index, rateToUse);
+            return;
+          }
+
+          blobUrl = convertBase64ToBlobUrl(res.audioBase64, res.mimeType || 'audio/wav');
+          audioBlobMapRef.current.set(index, blobUrl);
+        } catch (fetchErr: any) {
+          if (fetchErr?.name === 'AbortError') return;
+          setFallbackActive(true);
+          speakLocalSegment(index, rateToUse);
+          return;
+        } finally {
+          setIsLoadingAudio(false);
+        }
+      }
+
+      if (!isPlayingRef.current) return;
+
+      const audio = new Audio(blobUrl);
+      audioElementRef.current = audio;
+      audio.playbackRate = rateToUse;
+      audio.volume = isMuted ? 0 : 1.0;
+
+      audio.onended = () => {
+        if (isPlayingRef.current) {
+          // Pedagogical pause between mathematical steps (400ms)
+          setTimeout(() => {
+            if (isPlayingRef.current) {
+              speakSegment(index + 1);
+            }
+          }, 400);
+        }
+      };
+
+      audio.onerror = (e) => {
+        console.warn('HTML Audio playback error, falling back to local speech:', e);
+        setFallbackActive(true);
+        speakLocalSegment(index, rateToUse);
+      };
+
+      try {
+        await audio.play();
+        // Pre-fetch next segment in background
+        prefetchNextSegment(index + 1, voiceToUse);
+      } catch (playErr) {
+        console.warn('Audio play error:', playErr);
+        speakLocalSegment(index, rateToUse);
+      }
+    },
+    [isAr, isMuted, language, neuralVoice, prefetchNextSegment, speakLocalSegment, speechRate]
+  );
+
+  // Unified dispatcher
+  const speakSegment = useCallback(
+    (index: number, overrideRate?: number, overrideVoice?: string, forceLocal = false) => {
+      const shouldUseLocal = forceLocal || engine === 'local' || fallbackActive;
+      if (shouldUseLocal) {
+        speakLocalSegment(index, overrideRate);
+      } else {
+        playNeuralSegment(index, overrideRate, overrideVoice);
+      }
+    },
+    [engine, fallbackActive, playNeuralSegment, speakLocalSegment]
   );
 
   const handlePlay = () => {
-    if (!isSupported) return;
-
     if (isPaused) {
-      window.speechSynthesis.resume();
+      if (activeEngineRef.current === 'neural' && audioElementRef.current) {
+        audioElementRef.current.play().catch(() => {
+          speakSegment(currentSegmentIndex);
+        });
+      } else if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.resume();
+      }
       setIsPaused(false);
       setIsPlaying(true);
       isPlayingRef.current = true;
@@ -244,19 +494,13 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   };
 
   const handlePause = () => {
-    if (!isSupported) return;
-    window.speechSynthesis.pause();
+    if (activeEngineRef.current === 'neural' && audioElementRef.current) {
+      audioElementRef.current.pause();
+    } else if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.pause();
+    }
     setIsPaused(true);
     setIsPlaying(false);
-  };
-
-  const stopSpeech = () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    clearInterval(heartbeatTimerRef.current);
-    setIsPlaying(false);
-    setIsPaused(false);
     isPlayingRef.current = false;
   };
 
@@ -280,35 +524,51 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
     speakSegment(currentSegmentIndex);
   };
 
-  const handleTestVoiceSample = () => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-
+  const handleTestVoiceSample = async () => {
+    stopAllAudio();
     const sampleText = isAr
-      ? 'مرحباً بك! أنا أستاذك لشرح الرياضيات بهدوء ووضوح في منصة ميدمة ماث.'
-      : 'Hello! I am your math teacher, providing calm and clear step-by-step explanations on Maidama Math.';
+      ? 'مرحباً بك! أنا أستاذك لشرح الرياضيات بهدوء ووضوح في منصة ميدمة ماث، وسنحل المسألة خطوة بخطوة.'
+      : 'Hello! I am your math professor on Maidama Math, explaining each step calmly and clearly.';
 
-    const utterance = new SpeechSynthesisUtterance(sampleText);
-    utterance.rate = speechRate;
-    utterance.pitch = 1.0;
-    utterance.lang = isAr ? 'ar-SA' : 'en-US';
-
-    const chosen = getBestVoiceForLanguage(language, selectedVoiceURI);
-    if (chosen) utterance.voice = chosen;
-
-    window.speechSynthesis.speak(utterance);
+    if (engine === 'neural' && !fallbackActive) {
+      setIsLoadingAudio(true);
+      try {
+        const res = await fetchNeuralSpeechAudio(sampleText, language, neuralVoice);
+        if (res.success && res.audioBase64) {
+          const blobUrl = convertBase64ToBlobUrl(res.audioBase64, res.mimeType || 'audio/wav');
+          const audio = new Audio(blobUrl);
+          audioElementRef.current = audio;
+          audio.playbackRate = speechRate;
+          audio.volume = isMuted ? 0 : 1.0;
+          await audio.play();
+        } else {
+          throw new Error(res.error || 'Sample error');
+        }
+      } catch {
+        // Fallback to local
+        const utt = new SpeechSynthesisUtterance(sampleText);
+        utt.lang = isAr ? 'ar-SA' : 'en-US';
+        utt.rate = speechRate;
+        const chosen = getBestVoiceForLanguage(language, selectedLocalVoiceURI);
+        if (chosen) utt.voice = chosen;
+        window.speechSynthesis?.speak(utt);
+      } finally {
+        setIsLoadingAudio(false);
+      }
+    } else {
+      const utt = new SpeechSynthesisUtterance(sampleText);
+      utt.lang = isAr ? 'ar-SA' : 'en-US';
+      utt.rate = speechRate;
+      const chosen = getBestVoiceForLanguage(language, selectedLocalVoiceURI);
+      if (chosen) utt.voice = chosen;
+      window.speechSynthesis?.speak(utt);
+    }
   };
-
-  if (!isSupported) {
-    return null;
-  }
 
   const totalSegments = script.length;
   const currentSegment = script[currentSegmentIndex];
   const progressPercent = totalSegments > 0 ? Math.round(((currentSegmentIndex + 1) / totalSegments) * 100) : 0;
-
-  const activeVoice = availableVoices.find((v) => v.voice.voiceURI === selectedVoiceURI) || availableVoices[0];
-  const hasMatchingVoices = availableVoices.length > 0;
+  const activeNeuralMeta = NEURAL_VOICES.find((v) => v.id === neuralVoice) || NEURAL_VOICES[0];
 
   return (
     <div className="bg-gradient-to-r from-indigo-50/90 via-sky-50/60 to-indigo-50/90 dark:from-indigo-950/60 dark:via-slate-900/80 dark:to-indigo-950/60 border border-indigo-200/90 dark:border-indigo-800/70 rounded-2xl p-4 sm:p-5 shadow-xs transition-colors">
@@ -316,36 +576,65 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
         {/* Left: Identity and current state */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-600 to-sky-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-            {isPlaying ? (
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-sky-600 text-white flex items-center justify-center shrink-0 shadow-sm relative">
+            {isLoadingAudio ? (
+              <Loader2 className="w-5 h-5 animate-spin text-white" />
+            ) : isPlaying ? (
               <Volume2 className="w-5 h-5 animate-pulse" />
             ) : (
               <GraduationCap className="w-5 h-5" />
             )}
+            {engine === 'neural' && !fallbackActive && (
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+            )}
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
                 {isAr ? 'شرح الأستاذ الصوتي الهادئ' : 'Calm Educator Audio Explanation'}
               </span>
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                {isAr ? 'مجاني بالكامل' : '100% Free'}
-              </span>
-              {isPlaying && (
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+
+              {/* Engine Badge */}
+              {engine === 'neural' && !fallbackActive ? (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-emerald-600" />
+                  <span>{isAr ? 'صوت عصبي طبيعي (HD)' : 'Studio Neural HD'}</span>
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+                  {fallbackActive
+                    ? isAr
+                      ? 'صوت محلي (احتياطي)'
+                      : 'Local (Fallback)'
+                    : isAr
+                    ? 'صوت المتصفح المحلي'
+                    : 'Local Synthesizer'}
+                </span>
               )}
+
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-100/70 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300">
+                {isAr ? 'مجاني 100%' : '100% Free'}
+              </span>
             </div>
+
             <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-1.5">
               <span>
-                {isPlaying || isPaused
+                {isLoadingAudio
+                  ? isAr
+                    ? 'جاري تحضير صوت الأستاذ فائق الجودة...'
+                    : 'Synthesizing studio teacher voice...'
+                  : isPlaying || isPaused
                   ? `${isAr ? 'المقطع الحالي' : 'Active'}: ${currentSegment?.label} (${currentSegmentIndex + 1}/${totalSegments})`
                   : isAr
-                  ? 'أسلوب الأستاذ والمذيع التعليمي لصياغة المسائل والمعادلات شفهياً'
-                  : 'Teacher & educational broadcaster articulation of math derivation'}
+                  ? 'أسلوب الأستاذ والمذيع التعليمي لنطق المعادلات والخطوات'
+                  : 'Teacher & broadcaster verbal articulation of derivations'}
               </span>
-              {activeVoice && (
+              {engine === 'neural' && !fallbackActive && (
                 <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
-                  • {activeVoice.displayName}
+                  • {isAr ? activeNeuralMeta.nameAr : activeNeuralMeta.nameEn}
                 </span>
               )}
             </div>
@@ -382,10 +671,15 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
             <button
               type="button"
               onClick={handlePlay}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm hover:shadow transition cursor-pointer min-h-[36px]"
+              disabled={isLoadingAudio}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold shadow-sm hover:shadow transition cursor-pointer min-h-[36px]"
               title={isAr ? 'تشغيل الشرح الصوتي' : 'Play Explanation'}
             >
-              <Play className="w-4 h-4 fill-current" />
+              {isLoadingAudio ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 fill-current" />
+              )}
               <span>{isPaused ? (isAr ? 'استكمال' : 'Resume') : (isAr ? 'استماع للشرح' : 'Listen')}</span>
             </button>
           ) : (
@@ -404,7 +698,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
           {(isPlaying || isPaused) && (
             <button
               type="button"
-              onClick={stopSpeech}
+              onClick={stopAllAudio}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer min-h-[36px]"
               title={isAr ? 'إنهاء الشرح' : 'Stop'}
             >
@@ -445,8 +739,8 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-white/80 dark:hover:bg-slate-800'
             }`}
-            title={isAr ? 'إعدادات نبرة الصوت وسرعة الأستاذ' : 'Educator voice & rate settings'}
-            aria-label={isAr ? 'إعدادات نبرة الصوت وسرعة الأستاذ' : 'Educator voice & rate settings'}
+            title={isAr ? 'إعدادات نبرة الصوت والمحرك' : 'Voice engine & pace settings'}
+            aria-label={isAr ? 'إعدادات نبرة الصوت والمحرك' : 'Voice engine & pace settings'}
           >
             <Sliders className="w-4 h-4" />
           </button>
@@ -467,6 +761,23 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
           </button>
         </div>
       </div>
+
+      {/* Fallback notification notice if network or model temporarily busy */}
+      {fallbackNotice && (
+        <div className="mt-2.5 p-2.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>{fallbackNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFallbackNotice(null)}
+            className="text-[10px] underline font-semibold cursor-pointer"
+          >
+            {isAr ? 'حسناً' : 'Dismiss'}
+          </button>
+        </div>
+      )}
 
       {/* Interactive Step Navigator Pills */}
       <div className="mt-3.5 pt-3 border-t border-indigo-200/60 dark:border-indigo-900/40">
@@ -552,38 +863,107 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
         </div>
       )}
 
-      {/* Collapsible Educator & Voice Settings Panel */}
+      {/* Collapsible Voice & Engine Settings Panel */}
       {showSettings && (
         <div className="mt-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-4 animate-in fade-in duration-150">
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
             <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-              <span>{isAr ? 'تخصيص نبرة وصوت الأستاذ' : 'Educator Voice & Speed Settings'}</span>
+              <span>{isAr ? 'تخصيص محرك الصوت ونبرة الأستاذ' : 'Voice Engine & Persona Settings'}</span>
             </span>
             <button
               type="button"
               onClick={handleTestVoiceSample}
-              className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+              disabled={isLoadingAudio}
+              className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
             >
-              <span>{isAr ? 'تجربة الصوت الآن' : 'Test Voice Sample'}</span>
+              {isLoadingAudio ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5" />
+              )}
+              <span>{isAr ? 'تجربة نبرة الأستاذ الآن' : 'Test Voice Sample'}</span>
             </button>
           </div>
 
-          {/* Voice Selector */}
+          {/* Engine Selector: Neural HD vs Local */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-              {isAr ? 'اختيار الصوت المفضل من أصوات الجهاز والمتصفح:' : 'Select Educator Voice:'}
+              {isAr ? 'محرك الصوت المفضل:' : 'Voice Engine:'}
             </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleEngineChange('neural')}
+                className={`p-3 rounded-xl border text-start transition cursor-pointer flex items-start gap-2.5 ${
+                  engine === 'neural' && !fallbackActive
+                    ? 'bg-emerald-50/90 dark:bg-emerald-950/60 border-emerald-400 dark:border-emerald-600 shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="grow">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <span>{isAr ? 'الذكاء العصبي فائق الدقة (HD)' : 'Studio Neural HD (Recommended)'}</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200">
+                      {isAr ? 'طبيعي' : 'Natural'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
+                    {isAr
+                      ? 'صوت أستاذ ومذيع تعليمي طبيعي بالكامل، بنطق فصيح ووقفات هادئة ودعم العربية والإنجليزية (مجاني)'
+                      : 'High-fidelity natural human teacher voice with clear mathematical diction (100% Free)'}
+                  </div>
+                </div>
+                {engine === 'neural' && !fallbackActive && (
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+              </button>
 
-            {hasMatchingVoices ? (
+              <button
+                type="button"
+                onClick={() => handleEngineChange('local')}
+                className={`p-3 rounded-xl border text-start transition cursor-pointer flex items-start gap-2.5 ${
+                  engine === 'local' || fallbackActive
+                    ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-400 dark:border-indigo-600 shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <GraduationCap className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="grow">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <span>{isAr ? 'صوت الجهاز المحلي' : 'Local Device Voice'}</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {isAr ? 'سريع / أوفلاين' : 'Offline'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
+                    {isAr
+                      ? 'توليد فوري داخل متصفحك دون الحاجة للاتصال بالشبكة، كبديل احتياطي وسريع'
+                      : 'Immediate synthesis inside your browser without network calls, ideal as an offline fallback'}
+                  </div>
+                </div>
+                {(engine === 'local' || fallbackActive) && (
+                  <Check className="w-4 h-4 text-indigo-600 shrink-0" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Persona selector for Neural engine */}
+          {engine === 'neural' && !fallbackActive && (
+            <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                {isAr ? 'اختيار شخصية ونبرة الأستاذ:' : 'Select Educator Persona & Tone:'}
+              </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {availableVoices.map((v) => {
-                  const isSelected = v.voice.voiceURI === selectedVoiceURI;
+                {NEURAL_VOICES.map((v) => {
+                  const isSelected = v.id === neuralVoice;
                   return (
                     <button
-                      key={v.voice.voiceURI}
+                      key={v.id}
                       type="button"
-                      onClick={() => handleVoiceChange(v.voice.voiceURI)}
+                      onClick={() => handleNeuralVoiceChange(v.id)}
                       className={`p-2.5 rounded-xl border text-start transition cursor-pointer flex items-center justify-between gap-2 ${
                         isSelected
                           ? 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-400 dark:border-indigo-600 text-indigo-950 dark:text-indigo-200 shadow-xs'
@@ -591,38 +971,66 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
                       }`}
                     >
                       <div className="truncate">
-                        <div className="text-xs font-bold truncate">{v.displayName}</div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                          {v.voice.lang} • {v.badgeText}
+                        <div className="text-xs font-bold truncate">
+                          {isAr ? v.nameAr : v.nameEn}
+                        </div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                          {isAr ? v.descAr : v.descEn}
                         </div>
                       </div>
-                      {v.isHighQuality && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 shrink-0 font-medium">
-                          {isAr ? 'عالي الدقة' : 'Natural'}
-                        </span>
-                      )}
+                      {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
                     </button>
                   );
                 })}
               </div>
-            ) : (
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900/60 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">
+            </div>
+          )}
+
+          {/* Voice Selector for Local engine */}
+          {(engine === 'local' || fallbackActive) && (
+            <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                {isAr ? 'أصوات المتصفح المتوفرة على جهازك:' : 'Available Device Voices:'}
+              </label>
+
+              {availableLocalVoices.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                  {availableLocalVoices.map((v) => {
+                    const isSelected = v.voice.voiceURI === selectedLocalVoiceURI;
+                    return (
+                      <button
+                        key={v.voice.voiceURI}
+                        type="button"
+                        onClick={() => handleLocalVoiceChange(v.voice.voiceURI)}
+                        className={`p-2.5 rounded-xl border text-start transition cursor-pointer flex items-center justify-between gap-2 ${
+                          isSelected
+                            ? 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-400 dark:border-indigo-600 text-indigo-950 dark:text-indigo-200 shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="truncate">
+                          <div className="text-xs font-bold truncate">{v.displayName}</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {v.voice.lang} • {v.badgeText}
+                          </div>
+                        </div>
+                        {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900/60 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px]">
                     {isAr
-                      ? 'لم يتم اكتشاف صوت عربي مخصص في متصفحك حالياً.'
-                      : 'No specialized voice for this language detected in your browser.'}
-                  </p>
-                  <p className="text-[11px] mt-1 opacity-90">
-                    {isAr
-                      ? 'يستخدم التطبيق أصوات نظام التشغيل والمتصفح المجانية. يمكنك تثبيت حزمة الصوت العربي من إعدادات Windows أو Mac أو Android، أو الاستماع بالصوت الافتراضي.'
-                      : 'The app uses your free operating system voices. You can install extra language voices in your OS settings.'}
+                      ? 'يستخدم التطبيق أصوات نظام التشغيل والمتصفح المجانية كبديل احتياطي.'
+                      : 'The app uses your free operating system voices as backup.'}
                   </p>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Speed / Pace Selector */}
           <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -647,10 +1055,12 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
             </div>
           </div>
 
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-            {isAr
-              ? '💡 ميزة مجانية 100%: تُحفظ تفضيلات سرعة وصوت الأستاذ في حسابك أو ضمن إعدادات الضيف بشكل مستقل وتلقائي.'
-              : '💡 100% Free: Your preferred speed and voice choices are saved automatically to your account or guest session.'}
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <span>
+              {isAr
+                ? '💡 حل مجاني 100%: تجمع المنصة بين الصوت العصبي الطبيعي فائق الجودة وصوت المتصفح الاحتياطي التلقائي بدون أي تكلفة.'
+                : '💡 100% Free: Combines studio neural HD quality with automatic browser fallback with zero subscription.'}
+            </span>
           </div>
         </div>
       )}

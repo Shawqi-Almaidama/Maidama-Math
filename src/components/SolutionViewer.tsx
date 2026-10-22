@@ -15,14 +15,17 @@ import {
   LineChart, 
   MessageSquare, 
   ShieldCheck,
-  Download 
+  Download,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { MathSolution, ChatMessage } from '../types/math.ts';
 import { MathView, MixedMathText } from './MathView.tsx';
 import { GraphingCalculator } from './GraphingCalculator.tsx';
 import { useLocalization } from '../localization/LocalizationContext.tsx';
 import { localizeSolution } from '../utils/solutionLocalizer.ts';
-import { exportSolutionToPdf } from '../utils/pdfExport.ts';
+import { exportSolutionToPdf, generatePrintableHtml, downloadHtmlReport } from '../utils/pdfExport.ts';
+import { PdfExportModal } from './PdfExportModal.tsx';
 import { AudioExplanationPlayer } from './AudioExplanationPlayer.tsx';
 import { StructuredTutorMessage } from './StructuredTutorMessage.tsx';
 import { TutorVoiceRecorder } from './TutorVoiceRecorder.tsx';
@@ -61,8 +64,34 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
   });
   const [showGraph, setShowGraph] = useState(Boolean(displaySolution.plotConfig));
 
-  // Follow-up chat state
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // Follow-up chat state with initial pedagogical welcome greeting introducing Maidama Math
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => [
+    {
+      id: `welcome-${solution.id}`,
+      sender: 'assistant',
+      text:
+        lang === 'ar'
+          ? 'أهلًا بك! أنا معلمك ومساعدك في Maidama Math، وسأرافقك خطوة بخطوة لفهم المسألة والوصول إلى الحل الصحيح. هل لديك أي استفسار أو ترغب في توضيح أي خطوة أو قاعدة رياضية بالتفصيل؟'
+          : 'Welcome! I am your teacher and assistant at Maidama Math, and I will accompany you step-by-step to understand the problem and reach the correct solution. Feel free to ask me about any step, formula, or concept!',
+      timestamp: Date.now(),
+    },
+  ]);
+
+  // Synchronize initial welcome greeting when solution or language changes
+  React.useEffect(() => {
+    setChatMessages([
+      {
+        id: `welcome-${solution.id}`,
+        sender: 'assistant',
+        text:
+          lang === 'ar'
+            ? 'أهلًا بك! أنا معلمك ومساعدك في Maidama Math، وسأرافقك خطوة بخطوة لفهم المسألة والوصول إلى الحل الصحيح. هل لديك أي استفسار أو ترغب في توضيح أي خطوة أو قاعدة رياضية بالتفصيل؟'
+            : 'Welcome! I am your teacher and assistant at Maidama Math, and I will accompany you step-by-step to understand the problem and reach the correct solution. Feel free to ask me about any step, formula, or concept!',
+        timestamp: Date.now(),
+      },
+    ]);
+  }, [solution.id, lang]);
+
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
 
@@ -74,6 +103,56 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // PDF Export States & Robust Multi-Tier Handler
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
+  const [pdfModalHtml, setPdfModalHtml] = useState('');
+  const [exportNotification, setExportNotification] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+
+  const handleExportPdf = async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    setExportNotification(null);
+
+    try {
+      const result = await exportSolutionToPdf(displaySolution, lang);
+
+      if (result.success && result.method === 'popup') {
+        setExportNotification({
+          type: 'success',
+          message: t('solution.exportPdfSuccess'),
+        });
+      } else {
+        // Fallback: If popup was blocked or opened in modal mode
+        const html = result.htmlContent || generatePrintableHtml(displaySolution, lang);
+        setPdfModalHtml(html);
+        setShowPdfModal(true);
+        if (result.reason === 'popup_blocked') {
+          setExportNotification({
+            type: 'warning',
+            message: t('solution.exportPdfBlockedNotice'),
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to export solution:', err);
+      try {
+        const fallbackHtml = generatePrintableHtml(displaySolution, lang);
+        setPdfModalHtml(fallbackHtml);
+        setShowPdfModal(true);
+      } catch {}
+      setExportNotification({
+        type: 'error',
+        message: `${t('solution.exportPdfError')}: ${err?.message || ''}`,
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleSendChat = async (e: React.FormEvent) => {
@@ -183,15 +262,53 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
           </button>
 
           <button
-            onClick={() => exportSolutionToPdf(displaySolution, lang)}
-            className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl transition flex items-center gap-1.5 text-xs font-medium min-h-[36px] cursor-pointer"
+            onClick={handleExportPdf}
+            disabled={isExportingPdf}
+            className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl transition flex items-center gap-1.5 text-xs font-medium min-h-[36px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             title={lang === 'ar' ? 'تصدير الحل إلى ملف PDF' : 'Export Solution to PDF'}
           >
-            <Download className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>{lang === 'ar' ? 'تصدير PDF' : 'Export PDF'}</span>
+            {isExportingPdf ? (
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-600 dark:text-indigo-400" />
+            ) : (
+              <Download className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            )}
+            <span>
+              {isExportingPdf
+                ? t('solution.exportingPdf')
+                : (t('solution.exportPdf') || (lang === 'ar' ? 'تصدير PDF' : 'Export PDF'))}
+            </span>
           </button>
         </div>
       </div>
+
+      {/* Export Notification Banner */}
+      {exportNotification && (
+        <div
+          className={`p-3.5 rounded-2xl border text-xs flex items-center justify-between gap-3 shadow-xs transition-colors ${
+            exportNotification.type === 'success'
+              ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+              : exportNotification.type === 'warning'
+              ? 'bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+              : 'bg-rose-50 dark:bg-rose-950/70 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {exportNotification.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            )}
+            <span>{exportNotification.message}</span>
+          </div>
+          <button
+            onClick={() => setExportNotification(null)}
+            className="text-xs opacity-70 hover:opacity-100 p-1 rounded-md cursor-pointer"
+            aria-label="Dismiss notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Audio Spoken Explanation Player */}
       <AudioExplanationPlayer solution={displaySolution} language={lang} />
@@ -319,10 +436,10 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
                 >
                   <div className="flex items-center gap-3">
                     <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
-                      {step.stepNumber || idx + 1}
+                      <bdi>{step.stepNumber || idx + 1}</bdi>
                     </span>
-                    <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                      {step.title}
+                    <span className="text-sm font-semibold text-slate-800 dark:text-slate-200" dir="auto">
+                      <MixedMathText text={step.title} />
                     </span>
                   </div>
                   {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-500 dark:text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400" />}
@@ -506,6 +623,15 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
           </button>
         </form>
       </div>
+
+      {/* In-App PDF Export & Preview Modal */}
+      <PdfExportModal
+        isOpen={showPdfModal}
+        onClose={() => setShowPdfModal(false)}
+        solution={displaySolution}
+        language={lang}
+        htmlContent={pdfModalHtml || generatePrintableHtml(displaySolution, lang)}
+      />
     </div>
   );
 };

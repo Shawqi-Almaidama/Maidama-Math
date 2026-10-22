@@ -1,6 +1,8 @@
 import { EducationLevel, ExplanationStyle, Language } from '../types/math.ts';
 import { Theme } from '../theme/ThemeContext.tsx';
 
+export type SpeechEngineType = 'neural' | 'local';
+
 export interface UserPreferences {
   language: Language;
   theme: Theme;
@@ -8,6 +10,8 @@ export interface UserPreferences {
   style: ExplanationStyle;
   speechRate?: number;
   speechVoiceURI?: string;
+  speechEngine?: SpeechEngineType;
+  speechNeuralVoice?: string;
 }
 
 export const GUEST_PREFS_KEY = 'maidama_math_guest_prefs_v1';
@@ -26,6 +30,8 @@ export const DEFAULT_GUEST_PREFERENCES: UserPreferences = {
   style: 'step-by-step',
   speechRate: 0.9,
   speechVoiceURI: '',
+  speechEngine: 'neural',
+  speechNeuralVoice: 'Charon',
 };
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
@@ -35,6 +41,8 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   style: 'step-by-step',
   speechRate: 0.9,
   speechVoiceURI: '',
+  speechEngine: 'neural',
+  speechNeuralVoice: 'Charon',
 };
 
 export function normalizeLanguage(lang: any): Language {
@@ -71,6 +79,8 @@ export function sanitizePreferences(raw: any, fallback: UserPreferences): UserPr
     style: raw.style ? normalizeStyle(raw.style) : fallback.style,
     speechRate: raw.speechRate !== undefined ? normalizeSpeechRate(raw.speechRate) : (fallback.speechRate ?? 0.9),
     speechVoiceURI: typeof raw.speechVoiceURI === 'string' ? raw.speechVoiceURI : (fallback.speechVoiceURI ?? ''),
+    speechEngine: raw.speechEngine === 'local' ? 'local' : 'neural',
+    speechNeuralVoice: typeof raw.speechNeuralVoice === 'string' && raw.speechNeuralVoice ? raw.speechNeuralVoice : (fallback.speechNeuralVoice ?? 'Charon'),
   };
 }
 

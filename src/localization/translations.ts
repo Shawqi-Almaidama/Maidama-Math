@@ -106,12 +106,22 @@ export const arTranslations = {
     hideGraph: 'إخفاء الرسم',
     showGraph: 'إظهار الرسم',
     tutorChatTitle: 'اسأل المعلم حول هذه المسألة وخطواتها',
-    tutorChatSubtitle: '(مثال: لماذا قمنا بالقسمة في الخطوة ٢؟)',
+    tutorChatSubtitle: '(مثال: لماذا قمنا بالقسمة في الخطوة 2؟)',
     tutorEmptyChat: 'هل لديك أي استفسار أو نقطة غير واضحة في خطوات الحل؟ اكتب سؤالك هنا وسيشرحه لك المعلم فوراً.',
     tutorThinking: 'المعلم يفكر ويكتب التوضيح...',
     tutorPlaceholder: 'اطرح سؤالاً توضيحياً عن أي خطوة...',
     sendAction: 'إرسال',
     errorFollowup: 'عذراً، حدث خطأ أثناء معالجة السؤال التوضيحي.',
+    exportPdf: 'تصدير PDF',
+    exportingPdf: 'جاري تجهيز PDF...',
+    exportPdfSuccess: 'تم فتح واجهة الطباعة بنجاح. يمكنك اختيار "حفظ بتنسيق PDF" لحفظ الملف.',
+    exportPdfBlockedNotice: 'تعذر فتح نافذة الطباعة التلقائية بسبب قيود المتصفح. يمكنك استعراض التقرير وطباعته أو تنزيله من المعاينة أدناه.',
+    exportPdfError: 'حدث خطأ أثناء محاولة تصدير المستند.',
+    previewPdfModalTitle: 'تقرير الحل الرياضي (معاينة وطباعة)',
+    printReportBtn: 'طباعة أو حفظ كـ PDF',
+    downloadHtmlBtn: 'تنزيل ملف التقرير المستقل',
+    openNewTabBtn: 'فتح في نافذة جديدة',
+    closeModal: 'إغلاق',
   },
 
   // Verification Badges
@@ -132,8 +142,8 @@ export const arTranslations = {
       matrices: 'المصفوفات والمتجهات',
     },
     closeTooltip: 'إغلاق لوحة المفاتيح',
-    matrix2x2: 'مصفوفة ٢×٢',
-    matrix3x3: 'مصفوفة ٣×٣',
+    matrix2x2: 'مصفوفة 2×2',
+    matrix3x3: 'مصفوفة 3×3',
   },
 
   // Graphing Calculator
@@ -198,7 +208,11 @@ export const arTranslations = {
     styleDesc: 'يحدد نمط تنظيم الحلول وطريقة صياغة البراهين والخطوات',
 
     audioTitle: '4. الشرح الصوتي ونبرة الأستاذ (مجاني 100%)',
-    audioDesc: 'نطق هادئ ورصين بصوت أستاذ ومذيع تعليمي باستخدام أصوات جهازك ومتصفحك المجانية دون أي اشتراك أو تكلفة إضافية.',
+    audioDesc: 'نطق هادئ ورصين بصوت أستاذ ومذيع تعليمي طبيعي بالذكاء العصبي فائق الدقة، أو عبر محرك جهازك المحلي مجاناً بالكامل دون أي اشتراك.',
+    audioEngineLabel: 'محرك توليد الصوت المفضل',
+    audioEngineNeural: 'الذكاء العصبي فائق الدقة (أستاذ استوديو طبيعي - مجاني)',
+    audioEngineLocal: 'صوت الجهاز المحلي (أوفلاين / احتياطي)',
+    audioVoiceLabel: 'شخصية ونبرة الأستاذ الرياضي',
     audioRateLabel: 'سرعة إلقاء الأستاذ الافتراضية',
 
     inputMethodsTitle: '5. وسائط الإدخال المتوفرة',
@@ -482,6 +496,16 @@ export const enTranslations = {
     tutorPlaceholder: 'Ask a clarifying question about any step...',
     sendAction: 'Send',
     errorFollowup: 'Sorry, an error occurred while processing your follow-up.',
+    exportPdf: 'Export PDF',
+    exportingPdf: 'Preparing PDF...',
+    exportPdfSuccess: 'Print dialog opened successfully. Choose "Save as PDF" as destination.',
+    exportPdfBlockedNotice: 'Automatic print dialog was blocked by browser permissions. You can preview, print, or download the report below.',
+    exportPdfError: 'An error occurred while generating the document.',
+    previewPdfModalTitle: 'Mathematical Solution Report (Preview & Print)',
+    printReportBtn: 'Print / Save as PDF',
+    downloadHtmlBtn: 'Download Standalone Report',
+    openNewTabBtn: 'Open in New Tab',
+    closeModal: 'Close',
   },
 
   // Verification Badges
@@ -568,7 +592,11 @@ export const enTranslations = {
     styleDesc: 'Sets how derivations and proofs are structured and formatted',
 
     audioTitle: '4. Audio Explanation & Teacher Voice (100% Free)',
-    audioDesc: 'Calm, articulate pedagogical pronunciation utilizing free device and browser speech synthesis with zero cost or subscriptions.',
+    audioDesc: 'Calm, articulate pedagogical pronunciation utilizing free Studio Neural HD or local device synthesis with zero subscriptions.',
+    audioEngineLabel: 'Preferred Voice Engine',
+    audioEngineNeural: 'Studio Neural HD (Natural Professor - Free)',
+    audioEngineLocal: 'Local Device Voice (Offline / Fallback)',
+    audioVoiceLabel: 'Educator Persona & Tone',
     audioRateLabel: 'Default Educator Pace',
 
     inputMethodsTitle: '5. Multimodal Input Methods',

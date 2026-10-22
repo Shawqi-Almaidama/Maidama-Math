@@ -1,4 +1,10 @@
 import { MathSolution, VerificationResult, SolutionStep } from '../types/math.ts';
+import {
+  formatArabicMathForDisplay,
+  formatEnglishMathForDisplay,
+  toArabicDigits,
+  toWesternDigits,
+} from './mathNormalizer.ts';
 
 /**
  * Bidirectional phrase and term dictionaries for mathematical solution display.
@@ -227,6 +233,42 @@ const EXACT_PHRASES: Array<{ en: string; ar: string }> = [
     en: 'Exact Algebraic Transformation',
     ar: 'التحويلات الجبرية المعيارية',
   },
+  {
+    en: 'Subtract 4 from both sides',
+    ar: 'طرح ٤ من الطرفين',
+  },
+  {
+    en: 'Simplification',
+    ar: 'التبسيط',
+  },
+  {
+    en: 'Divide both sides by 2',
+    ar: 'قسمة الطرفين على ٢',
+  },
+  {
+    en: 'Subtract 6 from both sides',
+    ar: 'طرح ٦ من كلا الطرفين',
+  },
+  {
+    en: 'Divide by coefficient 2',
+    ar: 'القسمة على المعامل ٢',
+  },
+  {
+    en: 'Divide both sides by coefficient',
+    ar: 'قسمة الطرفين على المعامل',
+  },
+  {
+    en: 'Properties of equality for linear isolation: if ax + b = c then x = (c - b) / a',
+    ar: 'خاصية الجمع والضرب للمساواة لعزل المتغير: إذا كان أ س + ب = جـ فإن س = (جـ - ب) ÷ أ',
+  },
+  {
+    en: 'Direct substitution in original linear equation',
+    ar: 'التحقق بالتعويض المباشر في المعادلة الأصلية',
+  },
+  {
+    en: 'Linear equation residual: 0',
+    ar: 'متبقي المعادلة الخطية: ٠',
+  },
 ];
 
 /**
@@ -316,8 +358,38 @@ export function localizeText(text: string, targetLang: 'ar' | 'en'): string {
       /Direct substitution residual \|\|A\*x - b\|\| =\s*([0-9.e+-]+)/gi,
       (_, val) => `متبقي التعويض المباشر ||A·x - b|| = ${val}`
     );
+
+    // Dynamic: "Subtract [0-9]+ from both sides"
+    result = result.replace(
+      /Subtract\s+(\d+)\s+from\s+(?:both\s+sides|all\s+sides)/gi,
+      (_, num) => `طرح ${toArabicDigits(num)} من الطرفين`
+    );
+
+    // Dynamic: "Divide both sides by [0-9]+"
+    result = result.replace(
+      /Divide\s+both\s+sides\s+by\s+(\d+)/gi,
+      (_, num) => `قسمة الطرفين على ${toArabicDigits(num)}`
+    );
+
+    // Dynamic: "Divide by coefficient [0-9]+"
+    result = result.replace(
+      /Divide\s+(?:both\s+sides\s+)?by\s+coefficient\s+(\d+)/gi,
+      (_, num) => `القسمة على المعامل ${toArabicDigits(num)}`
+    );
   } else {
     // Reverse dynamic patterns
+    result = result.replace(
+      /طرح\s+([٠-٩0-9]+)\s+من\s+(?:الطرفين|كلا الطرفين)/gi,
+      (_, num) => `Subtract ${toWesternDigits(num)} from both sides`
+    );
+    result = result.replace(
+      /قسمة\s+الطرفين\s+على\s+([٠-٩0-9]+)/gi,
+      (_, num) => `Divide both sides by ${toWesternDigits(num)}`
+    );
+    result = result.replace(
+      /القسمة\s+على\s+المعامل\s+([٠-٩0-9]+)/gi,
+      (_, num) => `Divide by coefficient ${toWesternDigits(num)}`
+    );
     result = result.replace(
       /ضرب جميع عناصر المصفوفة\s+([A-Za-z])\s+في العدد القياسي\s+(\d+)\.?/gi,
       (_, mat, scalar) => `Multiply every element in matrix ${mat} by scalar ${scalar}.`
@@ -500,31 +572,98 @@ export function localizeSolution(
 ): MathSolution {
   if (!solution) return solution;
 
+  const isAr = targetLang === 'ar';
   const localizedCategory = localizeCategory(solution.category, targetLang);
   const localizedTopic = localizeTopic(solution.topic, targetLang);
 
-  const localizedAssumptions = solution.assumptions?.map((ass) =>
-    localizeText(ass, targetLang)
-  );
+  const localizedAssumptions = solution.assumptions?.map((ass) => {
+    const loc = localizeText(ass, targetLang);
+    return isAr ? formatArabicMathForDisplay(loc) : formatEnglishMathForDisplay(loc);
+  });
 
-  const localizedFormula = solution.formulaUsed
+  const rawFormula = solution.formulaUsed
     ? localizeFormulaUsed(solution.formulaUsed, solution.topic || solution.category, targetLang)
     : solution.formulaUsed;
+  const localizedFormula = rawFormula
+    ? isAr
+      ? formatArabicMathForDisplay(rawFormula)
+      : formatEnglishMathForDisplay(rawFormula)
+    : rawFormula;
 
-  const localizedSteps: SolutionStep[] = solution.steps.map((step) => ({
-    ...step,
-    title: localizeText(step.title, targetLang),
-    explanation: localizeText(step.explanation, targetLang),
-    subSteps: step.subSteps?.map((sub) => localizeText(sub, targetLang)),
-  }));
+  const localizedSteps: SolutionStep[] = solution.steps.map((step) => {
+    let title = localizeText(step.title, targetLang);
+    let explanation = localizeText(step.explanation, targetLang);
+    let latex = step.latex;
+
+    if (isAr) {
+      latex = step.latex ? formatArabicMathForDisplay(step.latex) : step.latex;
+      title = formatArabicMathForDisplay(title);
+      explanation = formatArabicMathForDisplay(explanation);
+    } else {
+      latex = step.latex ? formatEnglishMathForDisplay(step.latex) : step.latex;
+      title = formatEnglishMathForDisplay(title);
+      explanation = formatEnglishMathForDisplay(explanation);
+    }
+
+    return {
+      ...step,
+      title,
+      latex,
+      explanation,
+      subSteps: step.subSteps?.map((sub) => {
+        const locSub = localizeText(sub, targetLang);
+        return isAr ? formatArabicMathForDisplay(locSub) : formatEnglishMathForDisplay(locSub);
+      }),
+    };
+  });
 
   const localizedVerification = localizeVerification(solution.verification, targetLang);
+  if (localizedVerification) {
+    if (isAr) {
+      localizedVerification.method = formatArabicMathForDisplay(localizedVerification.method);
+      localizedVerification.explanation = formatArabicMathForDisplay(localizedVerification.explanation);
+    } else {
+      localizedVerification.method = formatEnglishMathForDisplay(localizedVerification.method);
+      localizedVerification.explanation = formatEnglishMathForDisplay(localizedVerification.explanation);
+    }
+  }
+
+  const finalAnswer = isAr
+    ? formatArabicMathForDisplay(solution.finalAnswer)
+    : formatEnglishMathForDisplay(solution.finalAnswer);
+
+  const plainAnswer = isAr
+    ? formatArabicMathForDisplay(solution.plainAnswer)
+    : formatEnglishMathForDisplay(solution.plainAnswer);
+
+  let interpretedLatex = solution.interpretedLatex;
+  if (interpretedLatex) {
+    interpretedLatex = isAr
+      ? formatArabicMathForDisplay(interpretedLatex)
+      : formatEnglishMathForDisplay(interpretedLatex);
+  }
+
+  let interpretedProblem = solution.interpretedProblem;
+  if (interpretedProblem) {
+    interpretedProblem = isAr
+      ? formatArabicMathForDisplay(localizeText(interpretedProblem, 'ar'))
+      : formatEnglishMathForDisplay(localizeText(interpretedProblem, 'en'));
+  }
 
   const localizedAlternative = solution.alternativeMethod
     ? {
         ...solution.alternativeMethod,
-        title: localizeText(solution.alternativeMethod.title, targetLang),
-        summary: localizeText(solution.alternativeMethod.summary, targetLang),
+        title: isAr
+          ? formatArabicMathForDisplay(localizeText(solution.alternativeMethod.title, 'ar'))
+          : formatEnglishMathForDisplay(localizeText(solution.alternativeMethod.title, 'en')),
+        summary: isAr
+          ? formatArabicMathForDisplay(localizeText(solution.alternativeMethod.summary, 'ar'))
+          : formatEnglishMathForDisplay(localizeText(solution.alternativeMethod.summary, 'en')),
+        latex: solution.alternativeMethod.latex
+          ? isAr
+            ? formatArabicMathForDisplay(solution.alternativeMethod.latex)
+            : formatEnglishMathForDisplay(solution.alternativeMethod.latex)
+          : solution.alternativeMethod.latex,
       }
     : undefined;
 
@@ -538,16 +677,31 @@ export function localizeSolution(
     localizeText(amb, targetLang)
   );
 
+  let plotConfig = solution.plotConfig;
+  if (plotConfig && plotConfig.functionLatex) {
+    plotConfig = {
+      ...plotConfig,
+      functionLatex: isAr
+        ? formatArabicMathForDisplay(plotConfig.functionLatex)
+        : formatEnglishMathForDisplay(plotConfig.functionLatex),
+    };
+  }
+
   return {
     ...solution,
+    interpretedProblem,
+    interpretedLatex,
     category: localizedCategory,
     topic: localizedTopic,
     assumptions: localizedAssumptions,
     formulaUsed: localizedFormula,
     steps: localizedSteps,
+    finalAnswer,
+    plainAnswer,
     verification: localizedVerification,
     alternativeMethod: localizedAlternative,
     didYouKnow: localizedDidYouKnow,
     ambiguities: localizedAmbiguities,
+    plotConfig,
   };
 }

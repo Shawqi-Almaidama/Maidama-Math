@@ -136,6 +136,50 @@ export class MathComputationEngine {
   }
 
   /**
+   * Solve linear equation: ax + b = c with full pedagogical steps and direct substitution residual verification
+   */
+  public solveLinearEquation(a: number, b: number, c: number, rawVariable: string = 'x'): EngineResult {
+    try {
+      if (a === 0) {
+        return {
+          success: false,
+          type: 'roots',
+          error: b === c ? 'Identity equation (infinite solutions)' : 'Inconsistent linear equation (no solution)',
+        };
+      }
+
+      const diff = c - b;
+      const root = diff / a;
+      const rootStr = Number.isInteger(root) ? root.toString() : root.toFixed(4).replace(/\.?0+$/, '');
+      const residual = Math.abs(a * root + b - c);
+
+      return {
+        success: true,
+        type: 'roots',
+        calculatedValue: `${rawVariable} = ${rootStr}`,
+        latex: `${rawVariable} = ${rootStr}`,
+        verified: residual < 1e-12,
+        residual: residual < 1e-12 ? 0 : residual,
+        verificationMethod: 'Direct substitution in original linear equation',
+        details: {
+          isLinear: true,
+          a,
+          b,
+          c,
+          solution: root,
+          variable: rawVariable,
+        },
+      };
+    } catch (err: unknown) {
+      return {
+        success: false,
+        type: 'roots',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
    * Solve quadratic equation: ax^2 + bx + c = 0 with residual checking
    */
   public solveQuadratic(a: number, b: number, c: number): EngineResult {
@@ -600,8 +644,7 @@ export class MathComputationEngine {
       const a = aStr === '' || aStr === '+' ? 1 : aStr === '-' ? -1 : parseFloat(aStr);
       const b = linearMatch[2] ? parseFloat(linearMatch[2].replace(/\s+/g, '')) : 0;
       const c = parseFloat(linearMatch[3].replace(/\s+/g, ''));
-      // ax + b = c  =>  ax + (b - c) = 0
-      return this.solveQuadratic(0, a, b - c);
+      return this.solveLinearEquation(a, b, c, 'x');
     }
 
     // 4. Check for matrix arithmetic (e.g. A = [[...]], B = [[...]], 2A + 3B or A + B)
