@@ -44,6 +44,7 @@ import {
   DEFAULT_USER_PREFERENCES,
 } from './utils/preferencesManager.ts';
 import { getApiUrl, getApiDiagnostics } from './utils/apiConfig.ts';
+import { clientMathSolver } from './utils/clientMathSolver.ts';
 
 const STORAGE_KEY_HISTORY = 'maidama_math_history_v1';
 
@@ -322,6 +323,17 @@ export default function App() {
         data = await res.json();
       } catch (jsonErr: any) {
         console.error(`[MaidamaAPI] JSON parsing failed (HTTP ${res.status}):`, jsonErr?.message);
+        // Fallback to client math solver if textual problem
+        if (q.trim() && !media?.imageBase64 && !media?.fileBase64) {
+          const localSol = clientMathSolver.solveLocally(q.trim(), style, level, language, 'text');
+          if (localSol) {
+            console.log(`[MaidamaAPI] Resolved locally via client math engine after HTTP ${res.status} non-JSON response`);
+            setHasStaleSolution(false);
+            setCurrentSolution(localSol);
+            saveToHistory(localSol);
+            return;
+          }
+        }
         throw new Error(
           language === 'ar'
             ? 'استجابة غير صالحة من الخادم. يرجى المحاولة مرة أخرى.'
@@ -335,6 +347,18 @@ export default function App() {
         setCurrentSolution(data.solution);
         saveToHistory(data.solution);
       } else {
+        // Attempt deterministic client math calculation fallback before surfacing error
+        if (q.trim() && !media?.imageBase64 && !media?.fileBase64) {
+          const localSol = clientMathSolver.solveLocally(q.trim(), style, level, language, 'text');
+          if (localSol) {
+            console.log(`[MaidamaAPI] Resolved locally via client math engine after server error (${res.status})`);
+            setHasStaleSolution(false);
+            setCurrentSolution(localSol);
+            saveToHistory(localSol);
+            return;
+          }
+        }
+
         if (currentSolution) {
           setHasStaleSolution(true);
         }
@@ -353,10 +377,27 @@ export default function App() {
         setSolveError(errorMsg);
       }
     } catch (err: any) {
+      console.error(`[MaidamaAPI] Solve request failed (${err?.name || 'Error'}):`, err?.message);
+
+      // Resilient local engine fallback: solve directly on device if it is a mathematical expression/equation
+      if (q.trim() && !media?.imageBase64 && !media?.fileBase64) {
+        try {
+          const localSol = clientMathSolver.solveLocally(q.trim(), style, level, language, 'text');
+          if (localSol) {
+            console.log('[MaidamaAPI] Resolved locally via client math engine after network failure');
+            setHasStaleSolution(false);
+            setCurrentSolution(localSol);
+            saveToHistory(localSol);
+            return;
+          }
+        } catch (localErr) {
+          console.warn('[MaidamaAPI] Local calculation engine fallback also failed:', localErr);
+        }
+      }
+
       if (currentSolution) {
         setHasStaleSolution(true);
       }
-      console.error(`[MaidamaAPI] Solve request failed (${err?.name || 'Error'}):`, err?.message);
       const isNetworkError =
         err?.name === 'TypeError' ||
         err?.message?.includes('Failed to fetch') ||

@@ -28,6 +28,11 @@ import {
   broadcastPreferences,
   SpeechEngineType,
 } from '../utils/preferencesManager.ts';
+import {
+  getCustomApiBaseUrl,
+  setCustomApiBaseUrl,
+  isCapacitorNative,
+} from '../utils/apiConfig.ts';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -63,6 +68,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [draftSpeechRate, setDraftSpeechRate] = useState<number>(() => getActivePreferences().speechRate ?? 0.9);
   const [draftSpeechEngine, setDraftSpeechEngine] = useState<SpeechEngineType>(() => getActivePreferences().speechEngine ?? 'neural');
   const [draftSpeechNeuralVoice, setDraftSpeechNeuralVoice] = useState<string>(() => getActivePreferences().speechNeuralVoice ?? 'Charon');
+  const [draftCustomApiUrl, setDraftCustomApiUrl] = useState<string>(() => getCustomApiBaseUrl());
+  const [testApiStatus, setTestApiStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Sync draft state with incoming active props on modal open
@@ -76,6 +83,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDraftSpeechRate(activePrefs.speechRate ?? 0.9);
       setDraftSpeechEngine(activePrefs.speechEngine ?? 'neural');
       setDraftSpeechNeuralVoice(activePrefs.speechNeuralVoice ?? 'Charon');
+      setDraftCustomApiUrl(getCustomApiBaseUrl());
+      setTestApiStatus('idle');
       setSavedSuccess(false);
     }
   }, [isOpen, activeLang, theme, defaultLevel, defaultStyle]);
@@ -86,6 +95,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const currentSavedRate = currentPrefs.speechRate ?? 0.9;
   const currentSavedEngine = currentPrefs.speechEngine ?? 'neural';
   const currentSavedVoice = currentPrefs.speechNeuralVoice ?? 'Charon';
+  const currentSavedCustomUrl = getCustomApiBaseUrl();
 
   const hasDraftChanges =
     draftLang !== activeLang ||
@@ -94,7 +104,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     draftStyle !== defaultStyle ||
     Math.abs(draftSpeechRate - currentSavedRate) > 0.01 ||
     draftSpeechEngine !== currentSavedEngine ||
-    draftSpeechNeuralVoice !== currentSavedVoice;
+    draftSpeechNeuralVoice !== currentSavedVoice ||
+    draftCustomApiUrl !== currentSavedCustomUrl;
 
   const handleSaveSettings = () => {
     // 1. Apply Language
@@ -118,7 +129,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       onStyleChange(draftStyle);
     }
 
-    // 5. Apply Speech Engine & Preferences
+    // 5. Apply Custom API Server URL
+    if (draftCustomApiUrl !== currentSavedCustomUrl) {
+      setCustomApiBaseUrl(draftCustomApiUrl.trim() || null);
+    }
+
+    // 6. Apply Speech Engine & Preferences
     const speechUpdates: Partial<{
       speechRate: number;
       speechEngine: SpeechEngineType;
@@ -150,6 +166,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 700);
   };
 
+  const handleTestConnection = async () => {
+    const target = draftCustomApiUrl.trim().replace(/\/$/, '');
+    if (!target) {
+      setTestApiStatus('idle');
+      return;
+    }
+    setTestApiStatus('testing');
+    try {
+      const resp = await fetch(`${target}/api/health`, { method: 'GET' });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.status === 'healthy') {
+          setTestApiStatus('success');
+          return;
+        }
+      }
+      setTestApiStatus('failed');
+    } catch {
+      setTestApiStatus('failed');
+    }
+  };
+
   const handleCancel = () => {
     // Revert draft changes and close
     setDraftLang(activeLang);
@@ -159,6 +197,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDraftSpeechRate(currentSavedRate);
     setDraftSpeechEngine(currentSavedEngine);
     setDraftSpeechNeuralVoice(currentSavedVoice);
+    setDraftCustomApiUrl(currentSavedCustomUrl);
+    setTestApiStatus('idle');
     setSavedSuccess(false);
     onClose();
   };
@@ -558,6 +598,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>{isRTL ? 'التخزين المحلي لجهازك (LocalStorage)' : 'Local Device Storage (LocalStorage)'}</span>
             </div>
+          </div>
+        </div>
+
+        {/* SECTION 6: BACKEND API & CONNECTIVITY */}
+        <div className="space-y-2">
+          <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-indigo-500" />
+              <span>{isRTL ? 'خادم الحسابات (API Server)' : 'API Server Endpoint'}</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {isCapacitorNative() ? 'Android Native' : 'Web / Local'}
+            </span>
+          </h4>
+
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {isRTL
+                ? 'اتركه فارغاً للاستخدام المباشر مع محرك الحسابات، أو أدخل عنوان خادم سحابي مخصص لتطبيق Android.'
+                : 'Leave blank for direct engine solving, or enter a custom cloud backend URL for Android.'}
+            </p>
+
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={draftCustomApiUrl}
+                onChange={(e) => {
+                  setDraftCustomApiUrl(e.target.value);
+                  setTestApiStatus('idle');
+                }}
+                placeholder="https://your-custom-backend.run.app"
+                className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-indigo-500"
+              />
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={!draftCustomApiUrl.trim() || testApiStatus === 'testing'}
+                className="px-3 py-1.5 text-xs font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900 disabled:opacity-50 transition cursor-pointer shrink-0"
+              >
+                {testApiStatus === 'testing'
+                  ? (isRTL ? 'جاري الفحص...' : 'Testing...')
+                  : (isRTL ? 'فحص الاتصال' : 'Test')}
+              </button>
+            </div>
+
+            {testApiStatus === 'success' && (
+              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-semibold">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isRTL ? 'تم الاتصال بالخادم بنجاح (200 OK).' : 'Successfully connected to server (200 OK).'}</span>
+              </p>
+            )}
+            {testApiStatus === 'failed' && (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400 flex items-center gap-1 font-semibold">
+                <X className="w-3.5 h-3.5" />
+                <span>{isRTL ? 'تعذر الاتصال بهذا العنوان. تأكد من عمل الخادم وشهادة SSL.' : 'Connection failed. Verify server URL and SSL.'}</span>
+              </p>
+            )}
           </div>
         </div>
 
