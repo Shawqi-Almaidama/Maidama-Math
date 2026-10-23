@@ -1,12 +1,13 @@
+
 name: Build Maidama Math Android APK
 
 on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Build Type (debug or release-unsigned)'
+        description: "Build Type (debug or release-unsigned)"
         required: true
-        default: 'debug'
+        default: debug
         type: choice
         options:
           - debug
@@ -31,35 +32,70 @@ jobs:
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
+
+      - name: Verify Node.js Version
+        shell: bash
+        run: |
+          set -e
+          node --version
+          npm --version
+          node -e "
+            const major = Number(process.versions.node.split('.')[0]);
+            console.log('Node.js runtime:', process.version);
+            if (major < 22) {
+              console.error('ERROR: Node.js 22 or newer is required.');
+              process.exit(1);
+            }
+          "
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          accept-android-sdk-licenses: 'true'
-          log-accepted-android-sdk-licenses: 'true'
-          packages: 'platform-tools platforms;android-36'
+          accept-android-sdk-licenses: "true"
+          log-accepted-android-sdk-licenses: "true"
+          packages: "platform-tools platforms;android-36"
 
       - name: Verify Android SDK Platform 36
+        shell: bash
         run: |
-          set -e
-          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          echo "Verifying Android SDK in: $SDK_DIR"
-          if [ ! -d "$SDK_DIR/platforms/android-36" ]; then
-            echo "Package platforms;android-36 not found in $SDK_DIR/platforms, installing via sdkmanager..."
-            yes | sdkmanager "platforms;android-36"
+          set -euo pipefail
+
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::ANDROID_HOME and ANDROID_SDK_ROOT are not configured."
+            exit 1
           fi
-          test -d "$SDK_DIR/platforms/android-36"
-          echo "Verified: Android SDK platform-36 is installed and ready."
+
+          echo "Android SDK directory: $SDK_DIR"
+
+          if [ ! -d "$SDK_DIR/platforms/android-36" ]; then
+            echo "::error::Android SDK platform 36 is missing."
+            exit 1
+          fi
+
+          if [ ! -d "$SDK_DIR/platform-tools" ]; then
+            echo "::error::Android SDK platform-tools are missing."
+            exit 1
+          fi
+
+          echo "Android SDK platform 36 and platform-tools verified."
 
       - name: Install NPM Dependencies
+        shell: bash
         run: |
+          set -e
+
+          node --version
+          npm --version
+
           if [ -f package-lock.json ]; then
             npm ci --legacy-peer-deps || npm install --legacy-peer-deps
           else
@@ -71,36 +107,60 @@ jobs:
         env:
           VITE_API_BASE_URL: https://ais-pre-namjaksavbwi5o3ufsnimf-234764102414.europe-west2.run.app
 
+      - name: Verify Node.js Before Capacitor Sync
+        shell: bash
+        run: |
+          set -e
+
+          node --version
+          node -e "
+            const major = Number(process.versions.node.split('.')[0]);
+            console.log('Node.js runtime before Capacitor:', process.version);
+            if (major < 22) {
+              console.error('ERROR: Capacitor requires Node.js 22 or newer.');
+              process.exit(1);
+            }
+          "
+
+          echo "Capacitor package versions:"
+          npm ls @capacitor/cli @capacitor/core --depth=0
+
       - name: Sync Web Assets with Capacitor Android
-        run: npx cap sync android
+        shell: bash
+        run: |
+          set -e
+          node --version
+          npx cap sync android
 
       - name: Grant Executable Permission to Gradle Wrapper
         run: chmod +x android/gradlew
 
       - name: Build Android Debug APK
-        if: "${{ github.event.inputs.build_type != 'release-unsigned' }}"
+        if: ${{ github.event_name == 'push' || inputs.build_type == 'debug' }}
         run: |
           cd android
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Build Android Unsigned Release APK
-        if: "${{ github.event.inputs.build_type == 'release-unsigned' }}"
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release-unsigned' }}
         run: |
           cd android
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload Debug APK Artifact
-        if: "${{ github.event.inputs.build_type != 'release-unsigned' }}"
+        if: ${{ always() && (github.event_name == 'push' || inputs.build_type == 'debug') && !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: maidama-math-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload Release APK Artifact
-        if: "${{ github.event.inputs.build_type == 'release-unsigned' }}"
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.build_type == 'release-unsigned' && !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: maidama-math-release-unsigned-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
           retention-days: 14
