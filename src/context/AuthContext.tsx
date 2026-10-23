@@ -9,6 +9,7 @@ import {
   broadcastPreferences,
   sanitizePreferences,
 } from '../utils/preferencesManager.ts';
+import { getApiUrl } from '../utils/apiConfig.ts';
 
 export interface UserProfile {
   id: string;
@@ -55,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token) return;
 
     let mounted = true;
-    fetch('/api/auth/me', {
+    fetch(getApiUrl('/api/auth/me'), {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
@@ -66,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
 
           // Fetch cloud preferences to ensure client is in sync with latest remote state
-          fetch('/api/user/data', {
+          fetch(getApiUrl('/api/user/data'), {
             headers: { Authorization: `Bearer ${token}` },
           })
             .then((r) => r.json())
@@ -101,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -123,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         // Asynchronously check cloud data for latest user settings
-        fetch('/api/user/data', {
+        fetch(getApiUrl('/api/user/data'), {
           headers: { Authorization: `Bearer ${data.token}` },
         })
           .then((r) => r.json())
@@ -149,7 +150,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch(getApiUrl('/api/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password }),
@@ -165,7 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveUserPreferences(data.user.id, DEFAULT_USER_PREFERENCES);
         broadcastPreferences(DEFAULT_USER_PREFERENCES, data.user.id);
 
-        fetch('/api/user/sync', {
+        fetch(getApiUrl('/api/user/sync'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -187,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     if (token) {
       try {
-        await fetch('/api/auth/logout', {
+        await fetch(getApiUrl('/api/auth/logout'), {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -208,7 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const syncUserData = useCallback(async (data: { history?: any[]; favorites?: any[]; settings?: any }) => {
     if (!token) return false;
     try {
-      const res = await fetch('/api/user/sync', {
+      const res = await fetch(getApiUrl('/api/user/sync'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,7 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchUserData = useCallback(async () => {
     if (!token) return null;
     try {
-      const res = await fetch('/api/user/data', {
+      const res = await fetch(getApiUrl('/api/user/data'), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const resData = await res.json();

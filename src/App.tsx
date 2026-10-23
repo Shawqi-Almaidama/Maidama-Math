@@ -43,6 +43,7 @@ import {
   sanitizePreferences,
   DEFAULT_USER_PREFERENCES,
 } from './utils/preferencesManager.ts';
+import { getApiUrl } from './utils/apiConfig.ts';
 
 const STORAGE_KEY_HISTORY = 'maidama_math_history_v1';
 
@@ -55,12 +56,12 @@ async function postSolveRequest(payload: any): Promise<Response> {
   };
 
   try {
-    return await fetch('/api/solve', options);
+    return await fetch(getApiUrl('/api/solve'), options);
   } catch (err: any) {
     // Only perform a single bounded retry if the error is a transient network disconnect
     if (err?.name === 'TypeError' || err?.message?.includes('fetch')) {
       await new Promise((resolve) => setTimeout(resolve, 600));
-      return await fetch('/api/solve', options);
+      return await fetch(getApiUrl('/api/solve'), options);
     }
     throw err;
   }
@@ -201,7 +202,7 @@ export default function App() {
     }
 
     // Fetch curriculum categories
-    fetch('/api/categories')
+    fetch(getApiUrl('/api/categories'))
       .then((r) => r.json())
       .then((d) => {
         if (d.categories) setCategories(d.categories);

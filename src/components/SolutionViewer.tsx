@@ -119,8 +119,19 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
     setIsExportingPdf(true);
     setExportNotification(null);
 
+    // Extract active graphing calculator canvas snapshot from DOM if visible
+    let activeGraphDataUrl: string | undefined;
     try {
-      const result = await exportSolutionToPdf(displaySolution, lang);
+      const canvasEl = document.querySelector('.graphing-calculator-canvas, canvas') as HTMLCanvasElement | null;
+      if (canvasEl && canvasEl.width > 0 && canvasEl.height > 0) {
+        activeGraphDataUrl = canvasEl.toDataURL('image/png');
+      }
+    } catch (e) {
+      console.warn('Canvas snapshot acquisition failed:', e);
+    }
+
+    try {
+      const result = await exportSolutionToPdf(displaySolution, lang, activeGraphDataUrl);
 
       if (result.success && result.method === 'popup') {
         setExportNotification({
@@ -129,7 +140,7 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
         });
       } else {
         // Fallback: If popup was blocked or opened in modal mode
-        const html = result.htmlContent || generatePrintableHtml(displaySolution, lang);
+        const html = result.htmlContent || generatePrintableHtml(displaySolution, lang, activeGraphDataUrl);
         setPdfModalHtml(html);
         setShowPdfModal(true);
         if (result.reason === 'popup_blocked') {
@@ -142,7 +153,7 @@ export const SolutionViewer: React.FC<SolutionViewerProps> = ({
     } catch (err: any) {
       console.error('Failed to export solution:', err);
       try {
-        const fallbackHtml = generatePrintableHtml(displaySolution, lang);
+        const fallbackHtml = generatePrintableHtml(displaySolution, lang, activeGraphDataUrl);
         setPdfModalHtml(fallbackHtml);
         setShowPdfModal(true);
       } catch {}

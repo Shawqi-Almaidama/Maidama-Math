@@ -4,11 +4,98 @@ import { MathSolution, PlotConfig } from '../types/math.ts';
 import { toArabicDigits } from './mathNormalizer.ts';
 
 /**
+ * Creates a robust mathematical function evaluator supporting:
+ * - Pure JavaScript Math expressions (e.g. Math.sin(x), Math.pow(x, 2), Math.sqrt)
+ * - Standard algebraic expressions (e.g. x^2 - 4, 2*x + 1)
+ * - Expressions prefixed with y = or f(x) =
+ * - Arabic variable and numeral forms
+ */
+function createMathEvaluator(rawExpr: string): ((x: number) => number | null) | null {
+  if (!rawExpr || !rawExpr.trim()) return null;
+
+  let cleaned = rawExpr.trim();
+  // Strip leading y = or f(x) =
+  cleaned = cleaned.replace(/^(?:y|f\(x\))\s*=\s*/i, '');
+
+  // Convert Arabic numerals and variables
+  const ARABIC_DIGITS: Record<string, string> = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
+    '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+  };
+  cleaned = cleaned
+    .replace(/[٠-٩۰-۹]/g, (d) => ARABIC_DIGITS[d] || d)
+    .replace(/(^|[^\u0621-\u064Aa-zA-Z_])س(?![^\u0621-\u064Aa-zA-Z_])/g, '$1x')
+    .replace(/(^|[^\u0621-\u064Aa-zA-Z_])ص(?![^\u0621-\u064Aa-zA-Z_])/g, '$1y');
+
+  // Attempt 1: MathJS compile (with Math. stripped and implicit multiplication)
+  const mathJsExpr = cleaned
+    .replace(/Math\./g, '')
+    .replace(/(\d)\s*([a-zA-Z])/g, '$1*$2')
+    .replace(/(\d)\s*\(/g, '$1*(')
+    .replace(/\)\s*\(/g, ')*(');
+
+  try {
+    const compiled = math.compile(mathJsExpr);
+    // Smoke test with x = 1
+    const testVal = compiled.evaluate({ x: 1, e: Math.E, pi: Math.PI, Math });
+    if (typeof testVal === 'number' && !isNaN(testVal)) {
+      return (x: number) => {
+        try {
+          const val = compiled.evaluate({ x, e: Math.E, pi: Math.PI, Math });
+          return typeof val === 'number' && Number.isFinite(val) ? val : null;
+        } catch {
+          return null;
+        }
+      };
+    }
+  } catch {}
+
+  // Attempt 2: Safe JavaScript Function evaluation
+  try {
+    let jsExpr = cleaned
+      .replace(/\^/g, '**')
+      .replace(/(\d)\s*x/g, '$1*x')
+      .replace(/(\d)\s*\(/g, '$1*(')
+      .replace(/\)\s*\(/g, ')*(');
+
+    const mathFuncs = [
+      'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sqrt', 'cbrt',
+      'abs', 'log', 'log10', 'log2', 'exp', 'pow', 'min', 'max', 'PI', 'E'
+    ];
+    mathFuncs.forEach((fn) => {
+      const regex = new RegExp(`(?<!Math\\.)\\b${fn}\\b`, 'g');
+      jsExpr = jsExpr.replace(regex, `Math.${fn}`);
+    });
+
+    const fn = new Function('x', 'Math', `
+      try {
+        var res = (${jsExpr});
+        return (typeof res === 'number' && isFinite(res)) ? res : null;
+      } catch (e) {
+        return null;
+      }
+    `);
+
+    const testVal = fn(1, Math);
+    if (typeof testVal === 'number' && !isNaN(testVal)) {
+      return (x: number) => fn(x, Math);
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
  * Renders an offscreen canvas snapshot of a mathematical curve plot for PDF printing
  */
 export function generatePlotImage(plotConfig: PlotConfig, lang: 'ar' | 'en'): string | null {
   try {
     if (!plotConfig || !plotConfig.functionExpr || !plotConfig.functionExpr.trim()) return null;
+
+    const evaluatePoint = createMathEvaluator(plotConfig.functionExpr);
+    if (!evaluatePoint) return null;
 
     const isAr = lang === 'ar';
     const width = 800;
@@ -17,25 +104,16 @@ export function generatePlotImage(plotConfig: PlotConfig, lang: 'ar' | 'en'): st
     let yMin = -6;
     let yMax = 6;
 
-    let compiled: math.EvalFunction;
-    try {
-      compiled = math.compile(plotConfig.functionExpr);
-    } catch {
-      return null;
-    }
-
     // Auto-scale Y domain based on sampled points
     const sampledY: number[] = [];
     const sampleSteps = 100;
     const sampleDx = (xMax - xMin) / sampleSteps;
     for (let i = 0; i <= sampleSteps; i++) {
       const sx = xMin + i * sampleDx;
-      try {
-        const sy = compiled.evaluate({ x: sx });
-        if (typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy) < 500) {
-          sampledY.push(sy);
-        }
-      } catch {}
+      const sy = evaluatePoint(sx);
+      if (typeof sy === 'number' && Number.isFinite(sy) && Math.abs(sy) < 500) {
+        sampledY.push(sy);
+      }
     }
 
     if (sampledY.length > 5) {
@@ -135,25 +213,21 @@ export function generatePlotImage(plotConfig: PlotConfig, lang: 'ar' | 'en'): st
 
         for (let i = 0; i <= steps; i++) {
           const x = xMin + i * dx;
-          try {
-            const y = compiled.evaluate({ x });
-            if (typeof y === 'number' && Number.isFinite(y)) {
-              const cx = toCanvasX(x);
-              const cy = toCanvasY(y);
-              if (cy >= -100 && cy <= height + 100) {
-                if (!started) {
-                  ctx.moveTo(cx, cy);
-                  started = true;
-                } else {
-                  ctx.lineTo(cx, cy);
-                }
+          const y = evaluatePoint(x);
+          if (typeof y === 'number' && Number.isFinite(y)) {
+            const cx = toCanvasX(x);
+            const cy = toCanvasY(y);
+            if (cy >= -100 && cy <= height + 100) {
+              if (!started) {
+                ctx.moveTo(cx, cy);
+                started = true;
               } else {
-                started = false;
+                ctx.lineTo(cx, cy);
               }
             } else {
               started = false;
             }
-          } catch {
+          } else {
             started = false;
           }
         }
@@ -199,21 +273,17 @@ export function generatePlotImage(plotConfig: PlotConfig, lang: 'ar' | 'en'): st
 
     for (let i = 0; i <= steps; i++) {
       const x = xMin + i * dx;
-      try {
-        const y = compiled.evaluate({ x });
-        if (typeof y === 'number' && Number.isFinite(y)) {
-          const cx = toCanvasX(x);
-          const cy = toCanvasY(y);
-          if (cy >= -100 && cy <= height + 100) {
-            pathD += started ? ` L ${cx.toFixed(1)} ${cy.toFixed(1)}` : `M ${cx.toFixed(1)} ${cy.toFixed(1)}`;
-            started = true;
-          } else {
-            started = false;
-          }
+      const y = evaluatePoint(x);
+      if (typeof y === 'number' && Number.isFinite(y)) {
+        const cx = toCanvasX(x);
+        const cy = toCanvasY(y);
+        if (cy >= -100 && cy <= height + 100) {
+          pathD += started ? ` L ${cx.toFixed(1)} ${cy.toFixed(1)}` : `M ${cx.toFixed(1)} ${cy.toFixed(1)}`;
+          started = true;
         } else {
           started = false;
         }
-      } catch {
+      } else {
         started = false;
       }
     }
@@ -445,6 +515,21 @@ export function generatePrintableHtml(
         }
         body {
           padding: 0 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        img {
+          max-width: 100% !important;
+          height: auto !important;
+          display: block !important;
+          page-break-inside: avoid !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .card, .final-box {
+          page-break-inside: avoid !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
         }
       }
     </style>
@@ -569,17 +654,32 @@ export function generatePrintableHtml(
     </div>
 
     <script>
-      // Automatic print trigger on load when opened in dedicated window/tab
-      window.addEventListener('DOMContentLoaded', function() {
-        setTimeout(function() {
-          try {
-            window.focus();
-            window.print();
-          } catch (e) {
-            console.log('Auto-print deferred to manual button click:', e);
-          }
-        }, 300);
-      });
+      function triggerPrintWhenReady() {
+        var images = Array.prototype.slice.call(document.images || []);
+        var promises = images.map(function(img) {
+          if (img.complete) return Promise.resolve();
+          return new Promise(function(resolve) {
+            img.onload = img.onerror = resolve;
+          });
+        });
+
+        Promise.all(promises).then(function() {
+          setTimeout(function() {
+            try {
+              window.focus();
+              window.print();
+            } catch (e) {
+              console.log('Auto-print deferred to manual button click:', e);
+            }
+          }, 250);
+        });
+      }
+
+      if (document.readyState === 'complete') {
+        triggerPrintWhenReady();
+      } else {
+        window.addEventListener('load', triggerPrintWhenReady);
+      }
     </script>
   </body>
 </html>`;

@@ -124,6 +124,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   scriptRef.current = script;
 
   const isPlayingRef = useRef(false);
+  const playbackSessionIdRef = useRef<number>(0);
   const activeEngineRef = useRef<'neural' | 'local'>('neural');
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -183,8 +184,9 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
     };
   }, []);
 
-  // Stop any active audio source cleanly
+  // Stop any active audio source cleanly and invalidate in-flight playback sessions
   const stopAllAudio = useCallback(() => {
+    playbackSessionIdRef.current++;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
 
@@ -291,6 +293,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   // Local Web Speech API playback
   const speakLocalSegment = useCallback(
     (index: number, overrideRate?: number, overrideLocalVoiceURI?: string) => {
+      const sessionId = ++playbackSessionIdRef.current;
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
 
       const currentScript = scriptRef.current;
@@ -301,6 +304,15 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
         isPlayingRef.current = false;
         clearInterval(heartbeatTimerRef.current);
         return;
+      }
+
+      // Ensure any neural audio element is halted completely
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current.onended = null;
+        audioElementRef.current.onerror = null;
+        audioElementRef.current.src = '';
+        audioElementRef.current = null;
       }
 
       window.speechSynthesis.cancel();
@@ -330,10 +342,10 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
 
       utterance.onend = () => {
         clearInterval(heartbeatTimerRef.current);
-        if (isPlayingRef.current) {
+        if (playbackSessionIdRef.current === sessionId && isPlayingRef.current) {
           // Pedagogical pause between steps
           setTimeout(() => {
-            if (isPlayingRef.current) {
+            if (playbackSessionIdRef.current === sessionId && isPlayingRef.current) {
               speakSegment(index + 1);
             }
           }, 350);
@@ -341,7 +353,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       };
 
       utterance.onerror = (e) => {
-        if (e.error === 'canceled' || e.error === 'interrupted') return;
+        if (e.error === 'canceled' || e.error === 'interrupted' || playbackSessionIdRef.current !== sessionId) return;
         console.warn('SpeechSynthesis local error:', e);
         clearInterval(heartbeatTimerRef.current);
         setIsPlaying(false);
@@ -366,6 +378,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   // Neural Studio Audio playback
   const playNeuralSegment = useCallback(
     async (index: number, overrideRate?: number, overrideVoice?: string) => {
+      const sessionId = ++playbackSessionIdRef.current;
       const currentScript = scriptRef.current;
       if (index < 0 || index >= currentScript.length) {
         setIsPlaying(false);
@@ -375,13 +388,16 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
         return;
       }
 
-      // Stop previous local or neural sound
+      // Hard-stop previous local or neural sound immediately so they never overlap
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
       if (audioElementRef.current) {
         audioElementRef.current.pause();
+        audioElementRef.current.onended = null;
+        audioElementRef.current.onerror = null;
         audioElementRef.current.src = '';
+        audioElementRef.current = null;
       }
 
       abortControllerRef.current?.abort();
@@ -404,6 +420,8 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
         setIsLoadingAudio(true);
         try {
           const res = await fetchNeuralSpeechAudio(segment.text, language, voiceToUse, abortCtrl.signal);
+          if (playbackSessionIdRef.current !== sessionId) return;
+
           if (!res.success || !res.audioBase64) {
             setFallbackActive(true);
             setFallbackNotice(
@@ -418,16 +436,18 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
           blobUrl = convertBase64ToBlobUrl(res.audioBase64, res.mimeType || 'audio/wav');
           audioBlobMapRef.current.set(index, blobUrl);
         } catch (fetchErr: any) {
-          if (fetchErr?.name === 'AbortError') return;
+          if (fetchErr?.name === 'AbortError' || playbackSessionIdRef.current !== sessionId) return;
           setFallbackActive(true);
           speakLocalSegment(index, rateToUse);
           return;
         } finally {
-          setIsLoadingAudio(false);
+          if (playbackSessionIdRef.current === sessionId) {
+            setIsLoadingAudio(false);
+          }
         }
       }
 
-      if (!isPlayingRef.current) return;
+      if (playbackSessionIdRef.current !== sessionId || !isPlayingRef.current) return;
 
       const audio = new Audio(blobUrl);
       audioElementRef.current = audio;
@@ -435,17 +455,17 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
       audio.volume = isMuted ? 0 : 1.0;
 
       audio.onended = () => {
-        if (isPlayingRef.current) {
-          // Pedagogical pause between mathematical steps (400ms)
-          setTimeout(() => {
-            if (isPlayingRef.current) {
-              speakSegment(index + 1);
-            }
-          }, 400);
-        }
+        if (playbackSessionIdRef.current !== sessionId || !isPlayingRef.current) return;
+        // Pedagogical pause between mathematical steps (400ms)
+        setTimeout(() => {
+          if (playbackSessionIdRef.current === sessionId && isPlayingRef.current) {
+            speakSegment(index + 1);
+          }
+        }, 400);
       };
 
       audio.onerror = (e) => {
+        if (playbackSessionIdRef.current !== sessionId || !isPlayingRef.current) return;
         console.warn('HTML Audio playback error, falling back to local speech:', e);
         setFallbackActive(true);
         speakLocalSegment(index, rateToUse);
@@ -453,10 +473,19 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
 
       try {
         await audio.play();
+        if (playbackSessionIdRef.current !== sessionId) {
+          audio.pause();
+          return;
+        }
         // Pre-fetch next segment in background
         prefetchNextSegment(index + 1, voiceToUse);
-      } catch (playErr) {
-        console.warn('Audio play error:', playErr);
+      } catch (playErr: any) {
+        // Crucial: Ignore user-initiated pause or superseding playback interruptions
+        if (playErr?.name === 'AbortError' || playbackSessionIdRef.current !== sessionId || !isPlayingRef.current) {
+          return;
+        }
+        console.warn('Audio play error, falling back to local speech:', playErr);
+        setFallbackActive(true);
         speakLocalSegment(index, rateToUse);
       }
     },
@@ -477,6 +506,7 @@ export const AudioExplanationPlayer: React.FC<AudioExplanationPlayerProps> = ({ 
   );
 
   const handlePlay = () => {
+    if (isPlaying || isLoadingAudio) return; // Prevent double trigger
     if (isPaused) {
       if (activeEngineRef.current === 'neural' && audioElementRef.current) {
         audioElementRef.current.play().catch(() => {

@@ -481,7 +481,7 @@ export const GraphingCalculator: React.FC<GraphingCalculatorProps> = ({
             setHoverCoord(null);
           }}
           onWheel={handleWheel}
-          className="w-full h-[420px] block"
+          className="graphing-calculator-canvas w-full h-[420px] block"
         />
 
         {/* Coordinate Tooltip in bottom */}

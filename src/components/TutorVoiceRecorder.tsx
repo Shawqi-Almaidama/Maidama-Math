@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Loader2 } from 'lucide-react';
+import { getApiUrl } from '../utils/apiConfig.ts';
 
 interface TutorVoiceRecorderProps {
   onTranscribed: (text: string) => void;
@@ -113,7 +114,7 @@ export const TutorVoiceRecorder: React.FC<TutorVoiceRecorderProps> = ({ onTransc
           reader.onloadend = async () => {
             try {
               const base64Audio = (reader.result as string).split(',')[1];
-              const res = await fetch('/api/transcribe-voice', {
+              const res = await fetch(getApiUrl('/api/transcribe-voice'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

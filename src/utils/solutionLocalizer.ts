@@ -563,8 +563,33 @@ export function localizeFormulaUsed(
 }
 
 /**
+ * Safely localizes and formats prose text that might contain embedded $...$ or $$...$$ formulas.
+ * Leaves normal prose words (Arabic or English) completely intact without letter corruption.
+ */
+function formatProseMath(rawText: string, targetLang: 'ar' | 'en'): string {
+  if (!rawText) return '';
+  const localized = localizeText(rawText, targetLang);
+  const isAr = targetLang === 'ar';
+
+  // If text contains $...$ or $$...$$, format the math expressions inside them
+  if (localized.includes('$')) {
+    return localized.replace(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/g, (mathMatch) => {
+      const isBlock = mathMatch.startsWith('$$');
+      const inner = isBlock ? mathMatch.slice(2, -2) : mathMatch.slice(1, -1);
+      const formatted = isAr
+        ? formatArabicMathForDisplay(inner)
+        : formatEnglishMathForDisplay(inner);
+      return isBlock ? `$$${formatted}$$` : `$${formatted}$`;
+    });
+  }
+
+  // Pure natural text: keep intact without variable or letter substitution!
+  return localized;
+}
+
+/**
  * Localize an entire MathSolution object at display time.
- * Leaves mathematical LaTeX, numbers, and answers completely intact.
+ * Leaves mathematical LaTeX, numbers, and answers completely intact while preserving natural prose.
  */
 export function localizeSolution(
   solution: MathSolution,
@@ -577,8 +602,7 @@ export function localizeSolution(
   const localizedTopic = localizeTopic(solution.topic, targetLang);
 
   const localizedAssumptions = solution.assumptions?.map((ass) => {
-    const loc = localizeText(ass, targetLang);
-    return isAr ? formatArabicMathForDisplay(loc) : formatEnglishMathForDisplay(loc);
+    return formatProseMath(ass, targetLang);
   });
 
   const rawFormula = solution.formulaUsed
@@ -591,18 +615,12 @@ export function localizeSolution(
     : rawFormula;
 
   const localizedSteps: SolutionStep[] = solution.steps.map((step) => {
-    let title = localizeText(step.title, targetLang);
-    let explanation = localizeText(step.explanation, targetLang);
+    const title = formatProseMath(step.title, targetLang);
+    const explanation = formatProseMath(step.explanation, targetLang);
     let latex = step.latex;
 
-    if (isAr) {
-      latex = step.latex ? formatArabicMathForDisplay(step.latex) : step.latex;
-      title = formatArabicMathForDisplay(title);
-      explanation = formatArabicMathForDisplay(explanation);
-    } else {
-      latex = step.latex ? formatEnglishMathForDisplay(step.latex) : step.latex;
-      title = formatEnglishMathForDisplay(title);
-      explanation = formatEnglishMathForDisplay(explanation);
+    if (latex) {
+      latex = isAr ? formatArabicMathForDisplay(latex) : formatEnglishMathForDisplay(latex);
     }
 
     return {
@@ -610,22 +628,14 @@ export function localizeSolution(
       title,
       latex,
       explanation,
-      subSteps: step.subSteps?.map((sub) => {
-        const locSub = localizeText(sub, targetLang);
-        return isAr ? formatArabicMathForDisplay(locSub) : formatEnglishMathForDisplay(locSub);
-      }),
+      subSteps: step.subSteps?.map((sub) => formatProseMath(sub, targetLang)),
     };
   });
 
   const localizedVerification = localizeVerification(solution.verification, targetLang);
   if (localizedVerification) {
-    if (isAr) {
-      localizedVerification.method = formatArabicMathForDisplay(localizedVerification.method);
-      localizedVerification.explanation = formatArabicMathForDisplay(localizedVerification.explanation);
-    } else {
-      localizedVerification.method = formatEnglishMathForDisplay(localizedVerification.method);
-      localizedVerification.explanation = formatEnglishMathForDisplay(localizedVerification.explanation);
-    }
+    localizedVerification.method = localizeText(localizedVerification.method, targetLang);
+    localizedVerification.explanation = formatProseMath(localizedVerification.explanation, targetLang);
   }
 
   const finalAnswer = isAr
@@ -645,20 +655,14 @@ export function localizeSolution(
 
   let interpretedProblem = solution.interpretedProblem;
   if (interpretedProblem) {
-    interpretedProblem = isAr
-      ? formatArabicMathForDisplay(localizeText(interpretedProblem, 'ar'))
-      : formatEnglishMathForDisplay(localizeText(interpretedProblem, 'en'));
+    interpretedProblem = formatProseMath(interpretedProblem, targetLang);
   }
 
   const localizedAlternative = solution.alternativeMethod
     ? {
         ...solution.alternativeMethod,
-        title: isAr
-          ? formatArabicMathForDisplay(localizeText(solution.alternativeMethod.title, 'ar'))
-          : formatEnglishMathForDisplay(localizeText(solution.alternativeMethod.title, 'en')),
-        summary: isAr
-          ? formatArabicMathForDisplay(localizeText(solution.alternativeMethod.summary, 'ar'))
-          : formatEnglishMathForDisplay(localizeText(solution.alternativeMethod.summary, 'en')),
+        title: formatProseMath(solution.alternativeMethod.title, targetLang),
+        summary: formatProseMath(solution.alternativeMethod.summary, targetLang),
         latex: solution.alternativeMethod.latex
           ? isAr
             ? formatArabicMathForDisplay(solution.alternativeMethod.latex)
@@ -674,7 +678,7 @@ export function localizeSolution(
   );
 
   const localizedAmbiguities = solution.ambiguities?.map((amb) =>
-    localizeText(amb, targetLang)
+    formatProseMath(amb, targetLang)
   );
 
   let plotConfig = solution.plotConfig;
@@ -705,3 +709,4 @@ export function localizeSolution(
     plotConfig,
   };
 }
+

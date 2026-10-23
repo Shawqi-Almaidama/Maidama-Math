@@ -1,4 +1,5 @@
 import { MathSolution } from '../types/math.ts';
+import { getApiUrl } from './apiConfig.ts';
 
 /**
  * Voice quality categorization metadata for educational broadcaster presentation.
@@ -589,7 +590,7 @@ export async function fetchNeuralSpeechAudio(
   signal?: AbortSignal
 ): Promise<NeuralSpeechResponse> {
   try {
-    const res = await fetch('/api/speech/synthesize', {
+    const res = await fetch(getApiUrl('/api/speech/synthesize'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, language, voice }),
