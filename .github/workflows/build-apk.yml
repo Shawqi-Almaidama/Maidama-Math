@@ -49,11 +49,16 @@ jobs:
             }
           "
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
+
+      - name: Verify Java Version
+        run: |
+          java -version
+          javac -version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
