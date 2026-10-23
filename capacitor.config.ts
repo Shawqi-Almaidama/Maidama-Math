@@ -1,20 +1,4 @@
-export interface CapacitorConfig {
-  appId: string;
-  appName: string;
-  webDir: string;
-  server?: {
-    androidScheme?: string;
-    cleartext?: boolean;
-    url?: string;
-  };
-  plugins?: Record<string, any>;
-  android?: {
-    allowMixedContent?: boolean;
-    webContentsDebuggingEnabled?: boolean;
-    [key: string]: any;
-  };
-  [key: string]: any;
-}
+import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.maidamamath.app',

@@ -1,0 +1,17 @@
+# Robots.txt for Maidama Math | ميدمة ماث
+# Production URL: https://ais-pre-namjaksavbwi5o3ufsnimf-234764102414.europe-west2.run.app/
+
+User-agent: *
+Allow: /
+Allow: /assets/
+Allow: /api/categories
+Allow: /api/health
+
+# Protect private user authentication and cloud sync data from search indexing
+Disallow: /api/auth/
+Disallow: /api/user/
+Disallow: /api/speech/
+Disallow: /api/transcribe-voice
+
+# Canonical XML Sitemap
+Sitemap: https://ais-pre-namjaksavbwi5o3ufsnimf-234764102414.europe-west2.run.app/sitemap.xml

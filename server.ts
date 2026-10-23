@@ -263,6 +263,17 @@ const CATEGORIES: MathCategory[] = [
   }
 ];
 
+// Search Engine Indexing & Crawler Endpoints
+app.get('/robots.txt', (_req: Request, res: Response) => {
+  const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
+  res.type('text/plain; charset=utf-8').sendFile(robotsPath);
+});
+
+app.get('/sitemap.xml', (_req: Request, res: Response) => {
+  const sitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
+  res.type('application/xml; charset=utf-8').sendFile(sitemapPath);
+});
+
 // API Routes
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
