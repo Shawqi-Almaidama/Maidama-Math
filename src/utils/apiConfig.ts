@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+
 /**
  * Resolves API endpoint URLs dynamically for both Web and Capacitor / Android environments.
  * 
@@ -11,10 +13,19 @@ export const DEFAULT_PRODUCTION_BACKEND = 'https://ais-pre-namjaksavbwi5o3ufsnim
 
 export function isCapacitorNative(): boolean {
   if (typeof window === 'undefined') return false;
+
+  try {
+    if (Capacitor.isNativePlatform()) return true;
+    if (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios') return true;
+  } catch {}
+
   const cap = (window as any)?.Capacitor;
-  const isCapNative = Boolean(cap?.isNativePlatform?.() || cap?.getPlatform?.() === 'android');
+  if (cap?.isNativePlatform?.() || cap?.getPlatform?.() === 'android') return true;
+
   const isCapProtocol = window.location.protocol === 'capacitor:' || window.location.protocol === 'ionic:';
-  return isCapNative || isCapProtocol;
+  const isLocalhostHttps = window.location.hostname === 'localhost' && window.location.protocol === 'https:';
+
+  return isCapProtocol || isLocalhostHttps;
 }
 
 export function getApiUrl(path: string): string {
@@ -32,4 +43,32 @@ export function getApiUrl(path: string): string {
 
   // Standard web browser environment: relative path
   return cleanPath;
+}
+
+/**
+ * Safe diagnostic metadata for troubleshooting connectivity on mobile devices without logging secrets.
+ */
+export function getApiDiagnostics(): {
+  isNative: boolean;
+  platform: string;
+  protocol: string;
+  hostname: string;
+  hasEnvBaseUrl: boolean;
+  effectiveBaseUrl: string;
+} {
+  const isNative = isCapacitorNative();
+  const platform = typeof window !== 'undefined' ? (Capacitor.getPlatform() || 'unknown') : 'server';
+  const protocol = typeof window !== 'undefined' ? window.location.protocol : '';
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const envBase = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
+  const effectiveBaseUrl = envBase || (isNative ? DEFAULT_PRODUCTION_BACKEND : '(relative)');
+
+  return {
+    isNative,
+    platform,
+    protocol,
+    hostname,
+    hasEnvBaseUrl: Boolean(envBase),
+    effectiveBaseUrl,
+  };
 }

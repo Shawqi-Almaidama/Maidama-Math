@@ -43,25 +43,34 @@ import {
   sanitizePreferences,
   DEFAULT_USER_PREFERENCES,
 } from './utils/preferencesManager.ts';
-import { getApiUrl } from './utils/apiConfig.ts';
+import { getApiUrl, getApiDiagnostics } from './utils/apiConfig.ts';
 
 const STORAGE_KEY_HISTORY = 'maidama_math_history_v1';
 
 // Bounded single retry for transient network connection drops during server startup
 async function postSolveRequest(payload: any): Promise<Response> {
+  const targetUrl = getApiUrl('/api/solve');
   const options: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   };
 
+  const diagnostics = getApiDiagnostics();
+  console.log(`[MaidamaAPI] POST ${targetUrl} (native: ${diagnostics.isNative}, platform: ${diagnostics.platform})`);
+
   try {
-    return await fetch(getApiUrl('/api/solve'), options);
+    const res = await fetch(targetUrl, options);
+    console.log(`[MaidamaAPI] Response: HTTP ${res.status} ${res.statusText}`);
+    return res;
   } catch (err: any) {
+    console.warn(`[MaidamaAPI] Initial fetch failed (${err?.name || 'Error'}: ${err?.message || 'unknown'}). Retrying once...`);
     // Only perform a single bounded retry if the error is a transient network disconnect
-    if (err?.name === 'TypeError' || err?.message?.includes('fetch')) {
+    if (err?.name === 'TypeError' || err?.message?.includes('fetch') || err?.message?.includes('NetworkError')) {
       await new Promise((resolve) => setTimeout(resolve, 600));
-      return await fetch(getApiUrl('/api/solve'), options);
+      const retryRes = await fetch(targetUrl, options);
+      console.log(`[MaidamaAPI] Retry Response: HTTP ${retryRes.status} ${retryRes.statusText}`);
+      return retryRes;
     }
     throw err;
   }
@@ -306,8 +315,13 @@ export default function App() {
 
       let data: any = null;
       try {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.warn(`[MaidamaAPI] Unexpected HTML response received (HTTP ${res.status}). Endpoint may be redirecting to an auth or landing page.`);
+        }
         data = await res.json();
-      } catch {
+      } catch (jsonErr: any) {
+        console.error(`[MaidamaAPI] JSON parsing failed (HTTP ${res.status}):`, jsonErr?.message);
         throw new Error(
           language === 'ar'
             ? 'استجابة غير صالحة من الخادم. يرجى المحاولة مرة أخرى.'
@@ -316,6 +330,7 @@ export default function App() {
       }
 
       if (res.ok && data?.success && data?.solution) {
+        console.log(`[MaidamaAPI] Solution received successfully (id: ${data.solution.id})`);
         setHasStaleSolution(false);
         setCurrentSolution(data.solution);
         saveToHistory(data.solution);
@@ -324,6 +339,7 @@ export default function App() {
           setHasStaleSolution(true);
         }
         const rawError = String(data?.error || '');
+        console.warn(`[MaidamaAPI] Server returned error (HTTP ${res.status}):`, rawError);
         let errorMsg = '';
         if (res.status === 503 || rawError.includes('503') || rawError.includes('UNAVAILABLE') || rawError.includes('high demand') || rawError.includes('overloaded')) {
           errorMsg = t('solver.serviceUnavailable');
@@ -340,6 +356,7 @@ export default function App() {
       if (currentSolution) {
         setHasStaleSolution(true);
       }
+      console.error(`[MaidamaAPI] Solve request failed (${err?.name || 'Error'}):`, err?.message);
       const isNetworkError =
         err?.name === 'TypeError' ||
         err?.message?.includes('Failed to fetch') ||

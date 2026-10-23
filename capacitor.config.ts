@@ -14,10 +14,13 @@ const config: CapacitorConfig = {
       backgroundColor: '#1e1b4b',
       androidSplashResourceName: 'splash',
     },
+    CapacitorHttp: {
+      enabled: true,
+    },
   },
   android: {
     allowMixedContent: false,
-    webContentsDebuggingEnabled: false,
+    webContentsDebuggingEnabled: true,
   },
 };
 

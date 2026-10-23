@@ -21,6 +21,17 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
+// Cross-Origin Resource Sharing (CORS) support for Web, Mobile, and Capacitor Android WebView
+app.use((req: Request, res: Response, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // Modular registry of mathematical categories and operations
 const CATEGORIES: MathCategory[] = [
   {
